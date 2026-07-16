@@ -1,0 +1,825 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ledger — portfolio tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#F4F5F7; --card:#FFFFFF; --ink:#161D29; --sub:#5A6373; --mut:#8B93A2;
+  --line:#E4E7EC; --line2:#D2D7DF;
+  --green:#0B8A5C; --green-bg:#E7F5EE; --red:#CC3D3D; --red-bg:#FBEBEB;
+  --accent:#2456D6; --accent-bg:#EAF0FD; --amber:#B87514; --amber-bg:#FBF1DE;
+  --r:10px;
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+body{background:var(--bg); color:var(--ink); font-family:'IBM Plex Sans',system-ui,sans-serif; font-size:14px; line-height:1.5;}
+.num{font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums;}
+h1,h2,h3,.disp{font-family:'Space Grotesk',sans-serif;}
+.wrap{max-width:1080px; margin:0 auto; padding:0 20px 60px;}
+
+/* top bar */
+.topbar{display:flex; align-items:center; justify-content:space-between; padding:16px 0 10px;}
+.brand{display:flex; align-items:baseline; gap:10px;}
+.brand h1{font-size:19px; font-weight:600; letter-spacing:-.01em;}
+.brand span{font-size:12px; color:var(--mut);}
+.topbtns{display:flex; gap:8px; align-items:center;}
+.status{font-size:12px; color:var(--mut); margin-right:6px;}
+
+/* ticker tape */
+.tape{display:flex; gap:26px; overflow-x:auto; padding:9px 14px; background:var(--ink); border-radius:var(--r); margin-bottom:18px; scrollbar-width:none;}
+.tape::-webkit-scrollbar{display:none;}
+.tape .q{display:flex; gap:8px; align-items:baseline; white-space:nowrap; font-size:12.5px;}
+.tape .q b{color:#EDF0F4; font-weight:500; font-family:'Space Grotesk';}
+.tape .q .num{color:#B9C1CD;}
+.tape .up{color:#4FCF9A;} .tape .dn{color:#F08A8A;}
+
+/* tabs */
+.tabs{display:flex; gap:2px; border-bottom:1px solid var(--line2); margin-bottom:18px; flex-wrap:wrap;}
+.tab{padding:9px 16px 8px; font-size:13.5px; color:var(--sub); cursor:pointer; border:none; background:none; border-bottom:2px solid transparent; margin-bottom:-1px; font-family:'IBM Plex Sans';}
+.tab:hover{color:var(--ink);}
+.tab.on{color:var(--accent); border-bottom-color:var(--accent); font-weight:600;}
+.tab.plus{color:var(--mut); font-size:13px;}
+
+/* buttons & inputs */
+button{font-family:'IBM Plex Sans'; font-size:13px; padding:7px 13px; border-radius:8px; border:1px solid var(--line2); background:var(--card); color:var(--ink); cursor:pointer;}
+button:hover{border-color:var(--mut);}
+button.pri{background:var(--ink); color:#fff; border-color:var(--ink);}
+button.pri:hover{background:#2A3547;}
+button.sm{padding:4px 10px; font-size:12px;}
+button.ghost{border-color:transparent; background:transparent; color:var(--sub);}
+button.ghost:hover{background:#ECEEF2; border-color:transparent;}
+button.danger{color:var(--red); border-color:#EAC9C9;}
+input,select{font-family:'IBM Plex Sans'; font-size:13.5px; padding:8px 10px; border:1px solid var(--line2); border-radius:8px; background:#fff; color:var(--ink); width:100%;}
+input:focus,select:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-bg);}
+label{font-size:12px; color:var(--sub); display:block; margin-bottom:4px;}
+.field{margin-bottom:12px;}
+.frow{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
+.frow3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;}
+
+/* cards */
+.cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(158px,1fr)); gap:10px; margin-bottom:18px;}
+.mcard{background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:13px 15px;}
+.mcard .lbl{font-size:11.5px; color:var(--mut); text-transform:uppercase; letter-spacing:.04em; margin-bottom:5px;}
+.mcard .val{font-size:20px; font-weight:500;}
+.mcard .sub{font-size:12px; color:var(--sub); margin-top:3px;}
+.pos{color:var(--green);} .neg{color:var(--red);}
+
+/* panel */
+.panel{background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:16px 18px; margin-bottom:16px;}
+.phead{display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:10px;}
+.phead h2{font-size:15px; font-weight:600;}
+.pills{display:flex; gap:5px; flex-wrap:wrap;}
+.pill{font-size:12px; padding:4px 11px; border-radius:999px; border:1px solid var(--line2); background:#fff; color:var(--sub); cursor:pointer;}
+.pill.on{background:var(--accent-bg); border-color:#B9CBF3; color:var(--accent); font-weight:600;}
+.legend{display:flex; gap:14px; font-size:12px; color:var(--sub); align-items:center;}
+.swatch{display:inline-block; width:15px; height:3px; border-radius:2px; vertical-align:middle; margin-right:5px;}
+.chartbox{position:relative; height:280px;}
+
+/* tables */
+table{width:100%; border-collapse:collapse; font-size:13px;}
+th{font-size:11.5px; color:var(--mut); font-weight:500; text-transform:uppercase; letter-spacing:.04em; text-align:right; padding:6px 8px;}
+th:first-child,td:first-child{text-align:left; padding-left:0;}
+td{padding:9px 8px; border-top:1px solid var(--line); text-align:right; font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; font-size:12.5px;}
+td.tx{font-family:'IBM Plex Sans'; font-size:13px;}
+td .tick{font-family:'IBM Plex Mono'; font-weight:600; font-size:12.5px;}
+.badge{display:inline-block; font-family:'IBM Plex Sans'; font-size:11px; font-weight:600; padding:2px 9px; border-radius:999px;}
+.b-buy{background:var(--green-bg); color:var(--green);} .b-sell{background:var(--red-bg); color:var(--red);}
+.b-dep{background:var(--accent-bg); color:var(--accent);} .b-wd{background:var(--amber-bg); color:var(--amber);}
+.b-open{background:var(--amber-bg); color:var(--amber);} .b-closed{background:#EDEFF3; color:var(--sub);}
+.icoBtn{background:none; border:none; color:var(--mut); cursor:pointer; padding:2px 4px; font-size:13px;}
+.icoBtn:hover{color:var(--ink);}
+.empty{color:var(--mut); font-size:13px; padding:22px 0; text-align:center;}
+
+/* analytics */
+.anagrid{display:grid; grid-template-columns:1fr 1fr; gap:24px;}
+.mrow{display:grid; grid-template-columns:1.4fr 1fr 1fr; gap:8px; padding:6px 0; border-bottom:1px solid var(--line); font-size:12.5px; align-items:baseline;}
+.mrow span:first-child{color:var(--sub); font-family:'IBM Plex Sans';}
+.mrow.mhead{border-bottom:1px solid var(--line2); font-size:11.5px; color:var(--mut); text-transform:uppercase; letter-spacing:.04em; font-family:'IBM Plex Sans';}
+.mrow.mhead span{color:var(--mut);}
+.mtbl th{padding:5px 7px;}
+.mtbl td{padding:6px 7px; font-size:11.5px; border-top:none; border-left:2px solid #fff;}
+@media (max-width:640px){ .anagrid{grid-template-columns:1fr;} }
+
+/* segmented */
+.seg{display:flex; gap:6px; margin-bottom:12px;}
+.seg button{flex:1; padding:8px;}
+.seg button.selB{background:var(--green-bg); border-color:#BCE0CE; color:var(--green); font-weight:600;}
+.seg button.selS{background:var(--red-bg); border-color:#EAC9C9; color:var(--red); font-weight:600;}
+.seg button.selD{background:var(--accent-bg); border-color:#B9CBF3; color:var(--accent); font-weight:600;}
+.seg button.selW{background:var(--amber-bg); border-color:#EBD5AC; color:var(--amber); font-weight:600;}
+
+/* modal */
+.ov{position:fixed; inset:0; background:rgba(18,24,34,.45); display:flex; align-items:flex-start; justify-content:center; padding:7vh 16px; z-index:50; overflow-y:auto;}
+.mb{background:#fff; border-radius:14px; padding:22px 24px; width:100%; max-width:460px; box-shadow:0 12px 40px rgba(10,15,25,.18);}
+.mb h3{font-size:16px; margin-bottom:16px;}
+.mfoot{display:flex; justify-content:flex-end; gap:8px; margin-top:18px;}
+.note{font-size:12px; color:var(--sub); background:var(--bg); border-radius:8px; padding:9px 12px; line-height:1.5;}
+.hint{font-size:11.5px; color:var(--mut); margin-top:4px;}
+.warn{font-size:12.5px; color:var(--amber); background:var(--amber-bg); border-radius:8px; padding:9px 12px; margin-bottom:14px;}
+@media (max-width:640px){ .frow,.frow3{grid-template-columns:1fr;} .chartbox{height:220px;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand"><h1>Ledger</h1><span>personal portfolio tracker</span></div>
+    <div class="topbtns">
+      <span class="status" id="status">—</span>
+      <button class="sm" onclick="refreshPrices(true)" id="refreshBtn">↻ Refresh prices</button>
+      <button class="sm ghost" onclick="exportJSON()">Export</button>
+      <button class="sm ghost" onclick="openImport()">Import</button>
+    </div>
+  </div>
+  <div class="tape" id="tape"></div>
+  <div class="tabs" id="tabs"></div>
+  <div id="view"></div>
+</div>
+<div id="modal"></div>
+<script>
+/* ============ utils ============ */
+const $=s=>document.querySelector(s);
+const uid=()=>Math.random().toString(36).slice(2,10);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const todayISO=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+const CCY_SYM={USD:'$',SGD:'S$',HKD:'HK$',EUR:'€',GBP:'£',JPY:'¥',AUD:'A$',CNY:'¥'};
+function fmt(n,ccy,dp){if(n==null||isNaN(n))return'—';const s=CCY_SYM[ccy]??(ccy?ccy+' ':'');const d=dp!=null?dp:(Math.abs(n)>=1000?0:2);return(n<0?'-':'')+s+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});}
+function fmtN(n,dp=2){if(n==null||isNaN(n))return'—';return n.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:dp});}
+function fmtPct(x,signed=true){if(x==null||isNaN(x))return'—';const v=(x*100).toFixed(2);return(signed&&x>0?'+':'')+v+'%';}
+function pctCls(x){return x>0?'pos':x<0?'neg':'';}
+function dISO(d){return d.toISOString().slice(0,10);}
+
+/* ============ state ============ */
+const LS_KEY='ledger_state_v1', PX_KEY='ledger_prices_v1';
+const BENCHMARKS=[['^GSPC','S&P 500'],['^NDX','Nasdaq 100'],['^DJI','Dow Jones'],['^STI','STI (Singapore)'],['^HSI','HSI (Hong Kong)'],['SPY','SPY ETF'],['QQQ','QQQ ETF'],['VT','VT (World)']];
+function seedState(){return{portfolios:[
+  {id:uid(),name:'US stocks',type:'stocks',ccy:'USD',benchmark:'^GSPC',txns:[],flows:[]},
+  {id:uid(),name:'SG / HK stocks',type:'stocks',ccy:'SGD',benchmark:'^STI',txns:[],flows:[]},
+  {id:uid(),name:'Options',type:'options',ccy:'USD',benchmark:'^GSPC',txns:[],flows:[]}
+]};}
+let state; try{state=JSON.parse(localStorage.getItem(LS_KEY))||seedState();}catch(e){state=seedState();}
+let prices; try{prices=JSON.parse(localStorage.getItem(PX_KEY))||{};}catch(e){prices={};}
+let ui={tab:state.portfolios[0].id, range:'YTD'};
+let charts={};
+function save(){localStorage.setItem(LS_KEY,JSON.stringify(state));}
+function savePx(){try{localStorage.setItem(PX_KEY,JSON.stringify(prices));}catch(e){console.warn('price cache too large',e);}}
+function pf(id){return state.portfolios.find(p=>p.id===id);}
+
+/* ============ price data (Yahoo via CORS proxies) ============ */
+const IS_HOSTED=location.protocol.startsWith('http');
+const PROXIES=[u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),
+               u=>'https://corsproxy.io/?url='+encodeURIComponent(u),
+               u=>'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(u)];
+async function fetchChart(sym){
+  if(IS_HOSTED){
+    try{
+      const r=await fetch(`/api/chart?symbol=${encodeURIComponent(sym)}`,{signal:AbortSignal.timeout(15000)});
+      if(r.ok){const j=await r.json();return parseYahoo(j,sym);}
+    }catch(e){/* fall through */}
+    return null;
+  }
+  const url=`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=2y&interval=1d`;
+  for(const wrap of PROXIES){
+    try{
+      const r=await fetch(wrap(url),{signal:AbortSignal.timeout(12000)});
+      if(!r.ok)continue;
+      const j=await r.json(); const d=parseYahoo(j,sym); if(d)return d;
+    }catch(e){/* try next proxy */}
+  }
+  return null;
+}
+function parseYahoo(j,sym){
+  const res=j?.chart?.result?.[0]; if(!res)return null;
+  const ts=res.timestamp||[], cl=(res.indicators?.quote?.[0]?.close)||[];
+  const dates=[],closes=[];
+  for(let i=0;i<ts.length;i++){if(cl[i]!=null){dates.push(dISO(new Date(ts[i]*1000)));closes.push(cl[i]);}}
+  if(!dates.length)return null;
+  return{t:Date.now(),dates,closes,last:res.meta?.regularMarketPrice??closes[closes.length-1],
+         prev:res.meta?.chartPreviousClose??(closes.length>1?closes[closes.length-2]:null),
+         ccy:res.meta?.currency||'',name:res.meta?.shortName||res.meta?.longName||sym};
+}
+function ccyOf(t){t=(t||'').toUpperCase();if(t.endsWith('.SI'))return'SGD';if(t.endsWith('.HK'))return'HKD';if(t.endsWith('.T'))return'JPY';if(t.endsWith('.L'))return'GBP';if(t.endsWith('.AX'))return'AUD';return'USD';}
+function fxSym(from,to){return from===to?null:`${from}${to}=X`;}
+function neededSymbols(){
+  const set=new Set();
+  for(const p of state.portfolios){
+    if(p.benchmark)set.add(p.benchmark);
+    if(p.type!=='stocks')continue;
+    const ccys=new Set();
+    for(const t of p.txns){set.add(t.ticker.toUpperCase());ccys.add(ccyOf(t.ticker));}
+    for(const f of p.flows)ccys.add(f.ccy||p.ccy);
+    for(const c of ccys){const s=fxSym(c,p.ccy);if(s)set.add(s);}
+  }
+  ['^GSPC','^NDX','^STI','^HSI'].forEach(s=>set.add(s));
+  return[...set];
+}
+let refreshing=false;
+async function refreshPrices(force){
+  if(refreshing)return; refreshing=true;
+  const btn=$('#refreshBtn'); if(btn)btn.textContent='Refreshing…';
+  const syms=neededSymbols();
+  const stale=s=>!prices[s]||(Date.now()-prices[s].t)>12*3600*1000;
+  const todo=syms.filter(s=>force||stale(s));
+  let done=0,fail=0;
+  for(const s of todo){
+    setStatus(`Fetching ${s} (${done+1}/${todo.length})…`);
+    const d=await fetchChart(s);
+    if(d)prices[s]=d; else fail++;
+    done++;
+  }
+  savePx(); refreshing=false;
+  if(btn)btn.textContent='↻ Refresh prices';
+  setStatus(todo.length?(fail?`Updated · ${fail} symbol(s) failed`:`Prices updated ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}`):'Prices up to date');
+  render();
+}
+function setStatus(s){const el=$('#status');if(el)el.textContent=s;}
+function lastPx(sym){return prices[sym]?.last??null;}
+function fxNow(from,to){if(from===to)return 1;const s=fxSym(from,to);const v=prices[s]?.last;return v||1;}
+
+/* ============ computations ============ */
+function sortedTxns(p){return[...p.txns].sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);}
+function holdings(p){ // average-cost per ticker
+  const h={};
+  for(const t of sortedTxns(p)){
+    const k=t.ticker.toUpperCase();
+    h[k]=h[k]||{sh:0,cost:0,realized:0,ccy:ccyOf(k)};
+    const x=h[k],sh=+t.shares,px=+t.price,fees=+(t.fees||0);
+    if(t.side==='buy'){x.cost+=sh*px+fees;x.sh+=sh;}
+    else{const avg=x.sh>0?x.cost/x.sh:px;x.realized+=(px-avg)*sh-fees;x.cost-=avg*sh;x.sh-=sh;if(x.sh<1e-9){x.sh=0;x.cost=0;}}
+  }
+  return h;
+}
+function rangeStart(range){
+  const d=new Date();
+  if(range==='1W')d.setDate(d.getDate()-7);
+  else if(range==='MTD'){d.setDate(1);}
+  else if(range==='1M')d.setMonth(d.getMonth()-1);
+  else if(range==='3M')d.setMonth(d.getMonth()-3);
+  else if(range==='6M')d.setMonth(d.getMonth()-6);
+  else if(range==='YTD'){d.setMonth(0);d.setDate(1);}
+  else if(range==='1Y')d.setFullYear(d.getFullYear()-1);
+  return dISO(d);
+}
+function axisDates(p,startISO){ // canonical trading-day axis from benchmark, else union of tickers
+  let base=prices[p.benchmark]?.dates;
+  if(!base||!base.length){
+    const set=new Set();
+    for(const t of p.txns){const d=prices[t.ticker.toUpperCase()];if(d)d.dates.forEach(x=>set.add(x));}
+    base=[...set].sort();
+  }
+  // extend by one day back so the range start has a prior anchor
+  const startIdx=base.findIndex(d=>d>=startISO);
+  if(startIdx<0)return[];
+  return base.slice(Math.max(0,startIdx-1));
+}
+function filledCloses(sym,axis){ // forward-filled closes aligned to axis
+  const d=prices[sym]; const out=new Array(axis.length).fill(null);
+  if(!d)return out;
+  const map={}; d.dates.forEach((dt,i)=>map[dt]=d.closes[i]);
+  let lastKnown=null,j=0;
+  // seed with last close before axis[0]
+  for(let i=0;i<d.dates.length;i++){if(d.dates[i]<axis[0])lastKnown=d.closes[i];else break;}
+  for(let i=0;i<axis.length;i++){if(map[axis[i]]!=null)lastKnown=map[axis[i]];out[i]=lastKnown;}
+  return out;
+}
+function valueSeries(p,axis){
+  const tickers=[...new Set(p.txns.map(t=>t.ticker.toUpperCase()))];
+  const fill={}; tickers.forEach(t=>fill[t]=filledCloses(t,axis));
+  const ccys=new Set([p.ccy]); tickers.forEach(t=>ccys.add(ccyOf(t))); p.flows.forEach(f=>ccys.add(f.ccy||p.ccy));
+  const fxFill={}; for(const c of ccys){if(c!==p.ccy)fxFill[c]=filledCloses(fxSym(c,p.ccy),axis);}
+  const fx=(c,i)=>c===p.ccy?1:(fxFill[c][i]??fxNow(c,p.ccy));
+  // pre-sort events
+  const txns=sortedTxns(p), flows=[...p.flows].sort((a,b)=>a.date<b.date?-1:1);
+  const V=[],F=[];
+  for(let i=0;i<axis.length;i++){
+    const day=axis[i]; let v=0;
+    // share counts + cash per ccy up to `day`
+    const sh={}, cash={};
+    for(const t of txns){if(t.date>day)break;const k=t.ticker.toUpperCase(),c=ccyOf(k);sh[k]=(sh[k]||0);cash[c]=(cash[c]||0);
+      const gross=t.shares*t.price, fees=+(t.fees||0);
+      if(t.side==='buy'){sh[k]+=+t.shares;cash[c]-=gross+fees;}else{sh[k]-=+t.shares;cash[c]+=gross-fees;}}
+    let flowToday=0;
+    for(const f of flows){if(f.date>day)break;const c=f.ccy||p.ccy;cash[c]=(cash[c]||0)+(f.type==='deposit'?+f.amount:-+f.amount);
+      if(f.date===day)flowToday+=(f.type==='deposit'?+f.amount:-+f.amount)*fx(c,i);}
+    for(const k in sh){if(Math.abs(sh[k])>1e-9){const px=fill[k][i];if(px!=null)v+=sh[k]*px*fx(ccyOf(k),i);}}
+    for(const c in cash)v+=cash[c]*fx(c,i);
+    V.push(v);F.push(flowToday);
+  }
+  return{V,F};
+}
+function twrSeries(V,F){ // cumulative time-weighted return, flows stripped
+  const out=new Array(V.length).fill(0); let idx=1;
+  for(let i=1;i<V.length;i++){
+    const prev=V[i-1];
+    if(prev>1e-9){idx*=(V[i]-F[i])/prev;}
+    out[i]=idx-1;
+  }
+  return out;
+}
+function benchReturns(sym,axis){
+  const c=filledCloses(sym,axis); let base=null;
+  return c.map(x=>{if(x==null)return null;if(base==null){base=x;return 0;}return x/base-1;});
+}
+const RF=0.03; // risk-free rate used for Sharpe / Sortino / alpha
+function dailyRets(V,F){const r=[];for(let i=1;i<V.length;i++){const prev=V[i-1];r.push(prev>1e-9?(V[i]-F[i])/prev-1:0);}return r;}
+function benchDailyRets(sym,axis){const c=filledCloses(sym,axis);const r=[];for(let i=1;i<c.length;i++){r.push(c[i]!=null&&c[i-1]?c[i]/c[i-1]-1:0);}return r;}
+function riskStats(rp,rb){
+  const n=rp.length; if(n<5)return null;
+  const mean=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:0;
+  const mp=mean(rp),mb=mean(rb);
+  const varp=mean(rp.map(x=>(x-mp)**2)), varb=mean(rb.map(x=>(x-mb)**2));
+  const cov=mean(rp.map((x,i)=>(x-mp)*(rb[i]-mb)));
+  const cum=a=>a.reduce((s,x)=>s*(1+x),1)-1;
+  const twrF=cum(rp), benF=cum(rb);
+  const annRet=Math.pow(1+twrF,252/n)-1, annB=Math.pow(1+benF,252/n)-1;
+  const vol=Math.sqrt(varp*252), volB=Math.sqrt(varb*252);
+  const sharpe=vol>1e-9?(annRet-RF)/vol:null;
+  const downside=rp.filter(x=>x<0);
+  const dvol=downside.length?Math.sqrt(mean(downside.map(x=>x*x))*252):0;
+  const sortino=dvol>1e-9?(annRet-RF)/dvol:null;
+  const beta=varb>1e-12?cov/varb:null;
+  const alpha=beta==null?null:annRet-(RF+beta*(annB-RF));
+  const corr=(varp>1e-12&&varb>1e-12)?cov/Math.sqrt(varp*varb):null;
+  let peak=1,idx=1,mdd=0;for(const r of rp){idx*=(1+r);if(idx>peak)peak=idx;const dd=idx/peak-1;if(dd<mdd)mdd=dd;}
+  return{n,annRet,annB,vol,volB,sharpe,sortino,beta,alpha,corr,mdd,best:Math.max(...rp),worst:Math.min(...rp)};
+}
+function monthlyReturns(p){ // trailing 1Y, portfolio vs benchmark, compounded per calendar month
+  const axis=axisDates(p,rangeStart('1Y')); if(axis.length<3)return[];
+  const{V,F}=valueSeries(p,axis);
+  const rp=dailyRets(V,F), rb=benchDailyRets(p.benchmark,axis);
+  const rows={};
+  for(let i=0;i<rp.length;i++){const m=axis[i+1].slice(0,7);rows[m]=rows[m]||{p:1,b:1};rows[m].p*=(1+rp[i]);rows[m].b*=(1+rb[i]);}
+  return Object.keys(rows).sort().map(m=>({m,p:rows[m].p-1,b:rows[m].b-1}));
+}
+function firstBuyDate(p,ticker){let d=null;for(const t of sortedTxns(p)){if(t.ticker.toUpperCase()===ticker&&t.side==='buy'){d=t.date;break;}}return d;}
+function daysBetween(a,b){return Math.round((new Date(b)-new Date(a))/864e5);}
+function cashByCcy(p){ // current cash per currency
+  const cash={};
+  for(const t of p.txns){const c=ccyOf(t.ticker);cash[c]=(cash[c]||0)+(t.side==='buy'?-(t.shares*t.price+ +(t.fees||0)):(t.shares*t.price- +(t.fees||0)));}
+  for(const f of p.flows){const c=f.ccy||p.ccy;cash[c]=(cash[c]||0)+(f.type==='deposit'?+f.amount:-+f.amount);}
+  return cash;
+}
+function injectedByCcy(p){const m={};for(const f of p.flows){const c=f.ccy||p.ccy;m[c]=(m[c]||0)+(f.type==='deposit'?+f.amount:-+f.amount);}return m;}
+function xirr(p){ // money-weighted since inception, in portfolio ccy
+  const flows=[];
+  for(const f of p.flows){const amt=(+f.amount)*fxNow(f.ccy||p.ccy,p.ccy);flows.push({d:f.date,a:f.type==='deposit'?-amt:amt});}
+  // trades without matching injections: treat net cash shortfall as implicit — skip; XIRR needs external flows only + terminal value
+  const term=currentValue(p);
+  if(!flows.length||term==null)return null;
+  flows.push({d:todayISO(),a:term});
+  const t0=new Date(flows[0].d).getTime();
+  const npv=r=>flows.reduce((s,f)=>s+f.a/Math.pow(1+r,(new Date(f.d).getTime()-t0)/(365.25*864e5)),0);
+  let lo=-0.9999,hi=10,flo=npv(lo),fhi=npv(hi);
+  if(flo*fhi>0)return null;
+  for(let i=0;i<80;i++){const mid=(lo+hi)/2,fm=npv(mid);if(Math.abs(fm)<1e-7)return mid;(flo*fm<0)?(hi=mid,fhi=fm):(lo=mid,flo=fm);}
+  return(lo+hi)/2;
+}
+function currentValue(p){ // holdings + cash, in portfolio ccy (converted at latest FX)
+  const h=holdings(p);let v=0,missing=false;
+  for(const k in h){if(h[k].sh>0){const px=lastPx(k);if(px==null){missing=true;continue;}v+=h[k].sh*px*fxNow(h[k].ccy,p.ccy);}}
+  const cash=cashByCcy(p);for(const c in cash)v+=cash[c]*fxNow(c,p.ccy);
+  return missing&&v===0?null:v;
+}
+/* options */
+function optPL(t){if(t.closePremium==null||t.closePremium==='')return null;
+  const dir=t.pos==='long'?1:-1;return(+t.closePremium-+t.openPremium)*dir*+t.contracts*+(t.mult||100)-+(t.fees||0);}
+function optOpenAmt(t){return +t.openPremium*+t.contracts*+(t.mult||100);}
+
+/* ============ rendering ============ */
+const RANGES=['1W','MTD','1M','3M','6M','YTD','1Y'];
+function render(){renderTape();renderTabs();renderView();}
+function renderTape(){
+  const items=[['^GSPC','S&P 500'],['^NDX','NDX'],['^STI','STI'],['^HSI','HSI']];
+  $('#tape').innerHTML=items.map(([s,n])=>{
+    const d=prices[s];if(!d)return`<div class="q"><b>${n}</b><span class="num">—</span></div>`;
+    const chg=d.prev?d.last/d.prev-1:null;
+    return`<div class="q"><b>${n}</b><span class="num">${fmtN(d.last,2)}</span><span class="num ${chg>0?'up':chg<0?'dn':''}">${chg==null?'':fmtPct(chg)}</span></div>`;
+  }).join('');
+}
+function renderTabs(){
+  const t=state.portfolios.map(p=>`<button class="tab ${ui.tab===p.id?'on':''}" onclick="setTab('${p.id}')">${esc(p.name)}</button>`).join('');
+  $('#tabs').innerHTML=t+`<button class="tab ${ui.tab==='ALL'?'on':''}" onclick="setTab('ALL')">All portfolios</button><button class="tab plus" onclick="openNewPortfolio()">+ New</button>`;
+}
+function setTab(id){ui.tab=id;render();}
+function setRange(r){ui.range=r;render();}
+function destroyCharts(){for(const k in charts){charts[k].destroy();delete charts[k];}}
+function renderView(){
+  destroyCharts();
+  if(ui.tab==='ALL')return renderAll();
+  const p=pf(ui.tab); if(!p){ui.tab=state.portfolios[0]?.id;return p?renderView():($('#view').innerHTML='');}
+  p.type==='options'?renderOptions(p):renderStocks(p);
+}
+function rangePills(){return RANGES.map(r=>`<button class="pill ${ui.range===r?'on':''}" onclick="setRange('${r}')">${r}</button>`).join('');}
+function multiCcyVal(m,mainCcy){ // format {ccy:val} map as lines
+  const ks=Object.keys(m).filter(c=>Math.abs(m[c])>0.005);
+  if(!ks.length)return fmt(0,mainCcy);
+  return ks.sort((a,b)=>a===mainCcy?-1:b===mainCcy?1:0).map(c=>fmt(m[c],c)).join('<span style="color:var(--mut)"> · </span>');
+}
+
+function renderStocks(p){
+  const h=holdings(p), axis=axisDates(p,rangeStart(ui.range));
+  const{V,F}=axis.length?valueSeries(p,axis):{V:[],F:[]};
+  const twr=twrSeries(V,F), bench=benchReturns(p.benchmark,axis);
+  const twrNow=twr.length?twr[twr.length-1]:null, benchNow=bench.length?bench[bench.length-1]:null;
+  // per-ccy market value of holdings
+  const mvByCcy={}, unrealByCcy={}; let realized=0, hasMissing=false;
+  for(const k in h){const x=h[k];realized+=x.realized*fxNow(x.ccy,p.ccy);
+    if(x.sh>0){const px=lastPx(k);if(px==null){hasMissing=true;continue;}
+      mvByCcy[x.ccy]=(mvByCcy[x.ccy]||0)+x.sh*px; unrealByCcy[x.ccy]=(unrealByCcy[x.ccy]||0)+(x.sh*px-x.cost);}}
+  const cash=cashByCcy(p), inj=injectedByCcy(p);
+  const unrealTotal=Object.keys(unrealByCcy).reduce((s,c)=>s+unrealByCcy[c]*fxNow(c,p.ccy),0);
+  const dayChg=V.length>1?V[V.length-1]-V[V.length-2]-F[F.length-1]:null;
+  const mwr=xirr(p);
+  const benchName=(BENCHMARKS.find(b=>b[0]===p.benchmark)||[,p.benchmark])[1];
+  const multiCcy=Object.keys(mvByCcy).length>1||Object.keys(cash).some(c=>c!==p.ccy&&Math.abs(cash[c])>0.005);
+
+  let html=`<div class="cards">
+    <div class="mcard"><div class="lbl">Market value</div><div class="val num" style="font-size:${multiCcy?'16px':'20px'}">${multiCcyVal(mvByCcy,p.ccy)}</div>
+      <div class="sub num ${pctCls(dayChg)}">${dayChg!=null?fmt(dayChg,p.ccy)+' today':''}</div></div>
+    <div class="mcard"><div class="lbl">Cash</div><div class="val num" style="font-size:${multiCcy?'16px':'20px'}">${multiCcyVal(cash,p.ccy)}</div>
+      <div class="sub">${Object.values(cash).some(v=>v<-0.005)?'<span class="neg">negative — log an injection?</span>':'from injections & trades'}</div></div>
+    <div class="mcard"><div class="lbl">TWR · ${ui.range}</div><div class="val num ${pctCls(twrNow)}">${fmtPct(twrNow)}</div>
+      <div class="sub num">${esc(benchName)}: <span class="${pctCls(benchNow)}">${fmtPct(benchNow)}</span></div></div>
+    <div class="mcard"><div class="lbl">Unrealized P&L</div><div class="val num ${pctCls(unrealTotal)}">${fmt(unrealTotal,p.ccy)}</div>
+      <div class="sub num">Realized: <span class="${pctCls(realized)}">${fmt(realized,p.ccy)}</span></div></div>
+    <div class="mcard"><div class="lbl">Capital injected</div><div class="val num" style="font-size:${Object.keys(inj).length>1?'16px':'20px'}">${multiCcyVal(inj,p.ccy)}</div>
+      <div class="sub">${p.flows.length} entr${p.flows.length===1?'y':'ies'} · excluded from TWR</div></div>
+    <div class="mcard"><div class="lbl">Money-weighted (XIRR)</div><div class="val num ${pctCls(mwr)}">${mwr==null?'—':fmtPct(mwr)}</div>
+      <div class="sub">annualized, since inception</div></div>
+  </div>`;
+  if(hasMissing)html+=`<div class="warn">Some tickers have no price data yet — hit “Refresh prices”.</div>`;
+
+  html+=`<div class="panel"><div class="phead"><h2>Performance vs ${esc(benchName)}</h2>
+    <div class="pills">${rangePills()}</div></div>
+    <div class="legend"><span><span class="swatch" style="background:#0B8A5C"></span>Portfolio (TWR)</span>
+    <span><span class="swatch" style="background:#98A1B0"></span>${esc(benchName)}</span>
+    ${multiCcy?`<span style="color:var(--mut)">non-${p.ccy} legs converted at daily FX</span>`:''}</div>
+    <div class="chartbox"><canvas id="perfChart"></canvas></div></div>`;
+
+  // ----- analytics panel -----
+  const rp=dailyRets(V,F), rb=benchDailyRets(p.benchmark,axis);
+  const st=riskStats(rp,rb);
+  const mrow=(l,v,v2)=>`<div class="mrow"><span>${l}</span><span class="num" style="text-align:right">${v}</span><span class="num" style="text-align:right;color:var(--mut)">${v2??''}</span></div>`;
+  html+=`<div class="panel"><div class="phead"><h2>Analytics · ${ui.range}</h2><span style="font-size:11.5px;color:var(--mut)">Sharpe / Sortino / alpha use rf = ${(RF*100).toFixed(1)}%${st&&st.n<60?' · short window — annualized figures are noisy':''}</span></div>`;
+  if(!st)html+=`<div class="empty">Not enough daily data in this range yet.</div>`;
+  else{
+    html+=`<div class="anagrid"><div>
+      <div class="mrow mhead"><span></span><span style="text-align:right">Portfolio</span><span style="text-align:right">${esc(benchName)}</span></div>
+      ${mrow('Annualized return',`<b class="${pctCls(st.annRet)}">${fmtPct(st.annRet)}</b>`,fmtPct(st.annB))}
+      ${mrow('Volatility (ann.)',fmtPct(st.vol,false),fmtPct(st.volB,false))}
+      ${mrow('Sharpe ratio',st.sharpe==null?'—':st.sharpe.toFixed(2))}
+      ${mrow('Sortino ratio',st.sortino==null?'—':st.sortino.toFixed(2))}
+      ${mrow('Max drawdown',`<b class="${pctCls(st.mdd)}">${fmtPct(st.mdd)}</b>`)}
+      ${mrow('Beta vs benchmark',st.beta==null?'—':st.beta.toFixed(2))}
+      ${mrow('Alpha (ann.)',st.alpha==null?'—':`<b class="${pctCls(st.alpha)}">${fmtPct(st.alpha)}</b>`)}
+      ${mrow('Correlation',st.corr==null?'—':st.corr.toFixed(2))}
+      ${mrow('Best day',`<span class="pos">${fmtPct(st.best)}</span>`)}
+      ${mrow('Worst day',`<span class="neg">${fmtPct(st.worst)}</span>`)}
+    </div>
+    <div><div class="mrow mhead"><span>Allocation by holding</span><span></span><span></span></div>
+      <div style="height:210px;position:relative;margin-top:8px"><canvas id="allocChart"></canvas></div></div></div>`;
+    // monthly returns (trailing 1Y)
+    const mr=monthlyReturns(p);
+    if(mr.length){
+      const cell=x=>{const bg=x>0?'var(--green-bg)':x<0?'var(--red-bg)':'transparent';
+        return`<td style="background:${bg}" class="${pctCls(x)}">${fmtPct(x)}</td>`;};
+      html+=`<div style="margin-top:16px;overflow-x:auto"><div class="mrow mhead" style="margin-bottom:6px"><span>Monthly returns · trailing 12 months</span><span></span><span></span></div>
+      <table class="mtbl"><tr><th style="text-align:left">Month</th>${mr.map(r=>`<th>${r.m.slice(2).replace('-','/')}</th>`).join('')}</tr>
+      <tr><td class="tx" style="text-align:left">Portfolio</td>${mr.map(r=>cell(r.p)).join('')}</tr>
+      <tr><td class="tx" style="text-align:left">${esc(benchName)}</td>${mr.map(r=>cell(r.b)).join('')}</tr></table></div>`;
+    }
+  }
+  html+=`</div>`;
+
+  // holdings table
+  const rows=Object.keys(h).filter(k=>h[k].sh>1e-9).sort();
+  const mvTotal=rows.reduce((s,k)=>{const px=lastPx(k);return s+(px?h[k].sh*px*fxNow(h[k].ccy,p.ccy):0);},0);
+  html+=`<div class="panel"><div class="phead"><h2>Holdings</h2><div style="display:flex;gap:8px">
+    <button class="sm" onclick="openFlow('${p.id}')">+ Capital</button>
+    <button class="sm pri" onclick="openTrade('${p.id}')">+ Trade</button>
+    <button class="sm ghost" onclick="openSettings('${p.id}')">⚙</button></div></div>`;
+  if(!rows.length)html+=`<div class="empty">No open positions. Add your first trade to get started.</div>`;
+  else{html+=`<table><tr><th>Ticker</th><th>Shares</th><th>Avg cost</th><th>Last</th><th>Value</th><th>P&L</th><th>Return</th><th>Days</th><th>Weight</th></tr>`;
+    for(const k of rows){const x=h[k],px=lastPx(k),avg=x.cost/x.sh,val=px?x.sh*px:null,pl=px?val-x.cost:null,ret=px?pl/x.cost:null;
+      const w=val!=null&&mvTotal>0?val*fxNow(x.ccy,p.ccy)/mvTotal:null;
+      const fb=firstBuyDate(p,k), days=fb?daysBetween(fb,todayISO()):null;
+      html+=`<tr><td><span class="tick">${esc(k)}</span> <span style="color:var(--mut);font-size:11px">${x.ccy}</span></td>
+      <td>${fmtN(x.sh,4)}</td><td>${fmtN(avg)}</td><td>${px==null?'—':fmtN(px)}</td><td>${val==null?'—':fmt(val,x.ccy)}</td>
+      <td class="${pctCls(pl)}">${pl==null?'—':fmt(pl,x.ccy)}</td><td class="${pctCls(ret)}">${fmtPct(ret)}</td>
+      <td>${days==null?'—':days}</td><td>${w==null?'—':(w*100).toFixed(1)+'%'}</td></tr>`;}
+    html+=`</table>`;}
+  html+=`</div>`;
+  html+=ledgerPanel(p);
+  $('#view').innerHTML=html;
+  drawPerf(axis,twr,bench,benchName);
+  drawAlloc(p,h);
+}
+function ledgerPanel(p){
+  const ev=[...p.txns.map(t=>({...t,kind:'txn'})),...p.flows.map(f=>({...f,kind:'flow'}))].sort((a,b)=>a.date<b.date?1:-1);
+  let html=`<div class="panel"><div class="phead"><h2>Transaction history</h2><span style="font-size:12px;color:var(--mut)">${ev.length} entries</span></div>`;
+  if(!ev.length)html+=`<div class="empty">Nothing logged yet.</div>`;
+  else{html+=`<table><tr><th>Date</th><th style="text-align:left">Type</th><th style="text-align:left">Detail</th><th>Amount</th><th></th></tr>`;
+    for(const e of ev){
+      if(e.kind==='txn'){const c=ccyOf(e.ticker),amt=e.shares*e.price+(e.side==='buy'?1:-1)*+(e.fees||0);
+        html+=`<tr><td>${e.date}</td><td class="tx" style="text-align:left"><span class="badge ${e.side==='buy'?'b-buy':'b-sell'}">${e.side==='buy'?'Buy':'Sell'}</span></td>
+        <td class="tx" style="text-align:left"><span class="tick">${esc(e.ticker.toUpperCase())}</span> · ${fmtN(+e.shares,4)} @ ${fmtN(+e.price)}${+e.fees?` · fees ${fmtN(+e.fees)}`:''}</td>
+        <td>${fmt(amt,c)}</td>
+        <td><button class="icoBtn" onclick="openTrade('${p.id}','${e.id}')">✎</button><button class="icoBtn" onclick="delTxn('${p.id}','${e.id}')">✕</button></td></tr>`;}
+      else{html+=`<tr><td>${e.date}</td><td class="tx" style="text-align:left"><span class="badge ${e.type==='deposit'?'b-dep':'b-wd'}">${e.type==='deposit'?'Deposit':'Withdraw'}</span></td>
+        <td class="tx" style="text-align:left">${esc(e.note||'Capital '+e.type)}</td><td>${fmt(+e.amount,e.ccy||p.ccy)}</td>
+        <td><button class="icoBtn" onclick="openFlow('${p.id}','${e.id}')">✎</button><button class="icoBtn" onclick="delFlow('${p.id}','${e.id}')">✕</button></td></tr>`;}
+    }
+    html+=`</table>`;}
+  return html+`</div>`;
+}
+function drawPerf(axis,twr,bench,benchName){
+  const el=document.getElementById('perfChart'); if(!el||!axis.length)return;
+  const labels=axis.map(d=>d.slice(5));
+  charts.perf=new Chart(el,{type:'line',data:{labels,datasets:[
+    {label:'Portfolio',data:twr.map(x=>x*100),borderColor:'#0B8A5C',backgroundColor:'rgba(11,138,92,.06)',fill:true,borderWidth:2,pointRadius:0,tension:.15},
+    {label:benchName,data:bench.map(x=>x==null?null:x*100),borderColor:'#98A1B0',borderWidth:1.6,pointRadius:0,tension:.15}]},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${c.parsed.y==null?'—':(c.parsed.y>0?'+':'')+c.parsed.y.toFixed(2)}%`}}},
+      scales:{x:{ticks:{maxTicksLimit:8,font:{family:'IBM Plex Mono',size:10},color:'#8B93A2'},grid:{display:false}},
+              y:{ticks:{callback:v=>v+'%',font:{family:'IBM Plex Mono',size:10},color:'#8B93A2'},grid:{color:'#EDEFF3'}}}}});
+}
+const ALLOC_COLORS=['#0B8A5C','#2456D6','#B87514','#7A4FD1','#CC3D3D','#0E8FA3','#C2478F','#5E7A1E','#8A5A2B','#4A5A72'];
+function drawAlloc(p,h){
+  const el=document.getElementById('allocChart'); if(!el)return;
+  const items=Object.keys(h).filter(k=>h[k].sh>1e-9).map(k=>{
+    const px=lastPx(k);return{k,v:px?h[k].sh*px*fxNow(h[k].ccy,p.ccy):0};}).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);
+  const cash=cashByCcy(p);const cashV=Object.keys(cash).reduce((s,c)=>s+Math.max(0,cash[c])*fxNow(c,p.ccy),0);
+  if(cashV>0.01)items.push({k:'Cash',v:cashV});
+  if(!items.length){el.parentElement.innerHTML='<div class="empty">No positions to allocate.</div>';return;}
+  const total=items.reduce((s,x)=>s+x.v,0);
+  charts.alloc=new Chart(el,{type:'doughnut',data:{labels:items.map(x=>x.k),
+    datasets:[{data:items.map(x=>x.v),backgroundColor:items.map((x,i)=>x.k==='Cash'?'#C6CCD6':ALLOC_COLORS[i%ALLOC_COLORS.length]),borderWidth:2,borderColor:'#fff'}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'62%',
+      plugins:{legend:{position:'right',labels:{boxWidth:10,font:{family:'IBM Plex Sans',size:11},color:'#5A6373',
+        generateLabels:c=>c.data.labels.map((l,i)=>({text:`${l}  ${(c.data.datasets[0].data[i]/total*100).toFixed(1)}%`,fillStyle:c.data.datasets[0].backgroundColor[i],strokeStyle:'transparent',index:i}))}},
+      tooltip:{callbacks:{label:c=>` ${fmt(c.parsed,p.ccy)} · ${(c.parsed/total*100).toFixed(1)}%`}}}}});
+}
+
+/* ============ options view ============ */
+function renderOptions(p){
+  const trades=[...p.txns].sort((a,b)=>(a.openDate<b.openDate?1:-1));
+  const closed=trades.filter(t=>optPL(t)!=null), open=trades.filter(t=>optPL(t)==null);
+  const realized=closed.reduce((s,t)=>s+optPL(t),0);
+  const wins=closed.filter(t=>optPL(t)>0).length;
+  const atRisk=open.reduce((s,t)=>s+(t.pos==='long'?optOpenAmt(t):0),0);
+  const credit=open.reduce((s,t)=>s+(t.pos==='short'?optOpenAmt(t):0),0);
+  const inj=injectedByCcy(p);
+  let html=`<div class="cards">
+    <div class="mcard"><div class="lbl">Realized P&L</div><div class="val num ${pctCls(realized)}">${fmt(realized,p.ccy)}</div>
+      <div class="sub">${closed.length} closed trade${closed.length===1?'':'s'}</div></div>
+    <div class="mcard"><div class="lbl">Win rate</div><div class="val num">${closed.length?Math.round(wins/closed.length*100)+'%':'—'}</div>
+      <div class="sub num">${wins}W / ${closed.length-wins}L</div></div>
+    <div class="mcard"><div class="lbl">Open positions</div><div class="val num">${open.length}</div>
+      <div class="sub num">Premium paid: ${fmt(atRisk,p.ccy)}${credit?` · received: ${fmt(credit,p.ccy)}`:''}</div></div>
+    <div class="mcard"><div class="lbl">Capital injected</div><div class="val num">${multiCcyVal(inj,p.ccy)}</div>
+      <div class="sub">${p.flows.length} entr${p.flows.length===1?'y':'ies'}</div></div>
+  </div>`;
+  html+=`<div class="panel"><div class="phead"><h2>Cumulative realized P&L</h2>
+    <div style="display:flex;gap:8px"><button class="sm" onclick="openFlow('${p.id}')">+ Capital</button>
+    <button class="sm pri" onclick="openOpt('${p.id}')">+ Option trade</button>
+    <button class="sm ghost" onclick="openSettings('${p.id}')">⚙</button></div></div>
+    <div class="chartbox" style="height:220px"><canvas id="optChart"></canvas></div></div>`;
+  // trade-quality metrics
+  if(closed.length){
+    const pls=closed.map(t=>optPL(t));
+    const winsArr=pls.filter(x=>x>0), lossArr=pls.filter(x=>x<0);
+    const sum=a=>a.reduce((s,x)=>s+x,0);
+    const grossW=sum(winsArr), grossL=Math.abs(sum(lossArr));
+    const pfac=grossL>0?grossW/grossL:(grossW>0?Infinity:null);
+    const avgW=winsArr.length?grossW/winsArr.length:null, avgL=lossArr.length?-grossL/lossArr.length:null;
+    const expectancy=sum(pls)/pls.length;
+    const holdDays=closed.filter(t=>t.openDate&&t.closeDate).map(t=>daysBetween(t.openDate,t.closeDate));
+    const avgHold=holdDays.length?Math.round(sum(holdDays)/holdDays.length):null;
+    const big=Math.max(...pls), small=Math.min(...pls);
+    const mrow2=(l,v)=>`<div class="mrow" style="grid-template-columns:1.4fr 1fr"><span>${l}</span><span class="num" style="text-align:right">${v}</span></div>`;
+    html+=`<div class="panel"><div class="phead"><h2>Trade quality</h2><span style="font-size:11.5px;color:var(--mut)">${closed.length} closed trade${closed.length===1?'':'s'}</span></div>
+      <div class="anagrid"><div>
+        ${mrow2('Profit factor',pfac==null?'—':pfac===Infinity?'∞':pfac.toFixed(2))}
+        ${mrow2('Expectancy / trade',`<b class="${pctCls(expectancy)}">${fmt(expectancy,p.ccy)}</b>`)}
+        ${mrow2('Average win',avgW==null?'—':`<span class="pos">${fmt(avgW,p.ccy)}</span>`)}
+        ${mrow2('Average loss',avgL==null?'—':`<span class="neg">${fmt(avgL,p.ccy)}</span>`)}
+      </div><div>
+        ${mrow2('Avg holding period',avgHold==null?'—':avgHold+' days')}
+        ${mrow2('Largest win',`<span class="pos">${fmt(big,p.ccy)}</span>`)}
+        ${mrow2('Largest loss',`<span class="${pctCls(small)}">${fmt(small,p.ccy)}</span>`)}
+        ${mrow2('Win / loss count',`${winsArr.length} / ${lossArr.length}`)}
+      </div></div></div>`;
+  }
+  const row=t=>{const pl=optPL(t);
+    return`<tr><td class="tx" style="text-align:left"><span class="tick">${esc(t.underlying.toUpperCase())}</span> ${esc(t.cp==='call'?'C':'P')}${fmtN(+t.strike)} <span style="color:var(--mut);font-size:11px">${t.expiry||''}</span></td>
+    <td class="tx" style="text-align:left"><span class="badge ${pl==null?'b-open':'b-closed'}">${pl==null?'Open':'Closed'}</span> <span style="color:var(--mut);font-size:11px">${t.pos}</span></td>
+    <td>${t.contracts}×${t.mult||100}</td><td>${fmtN(+t.openPremium)}<div style="color:var(--mut);font-size:10.5px">${t.openDate}</div></td>
+    <td>${t.closePremium==null||t.closePremium===''?'—':fmtN(+t.closePremium)}<div style="color:var(--mut);font-size:10.5px">${t.closeDate||''}</div></td>
+    <td class="${pctCls(pl)}">${pl==null?'—':fmt(pl,p.ccy)}</td>
+    <td><button class="icoBtn" onclick="openOpt('${p.id}','${t.id}')">✎</button><button class="icoBtn" onclick="delTxn('${p.id}','${t.id}')">✕</button></td></tr>`;};
+  html+=`<div class="panel"><div class="phead"><h2>Option trades</h2></div>`;
+  if(!trades.length)html+=`<div class="empty">No option trades yet. Log premium in/out — P&L is computed per contract.</div>`;
+  else html+=`<table><tr><th>Contract</th><th style="text-align:left">Status</th><th>Size</th><th>Open prem.</th><th>Close prem.</th><th>P&L</th><th></th></tr>${trades.map(row).join('')}</table>`;
+  html+=`</div>`+ledgerFlowsOnly(p);
+  $('#view').innerHTML=html;
+  // cumulative realized chart
+  const seq=closed.slice().sort((a,b)=>a.closeDate<b.closeDate?-1:1);
+  let cum=0; const pts=seq.map(t=>({x:t.closeDate,y:(cum+=optPL(t))}));
+  const el=document.getElementById('optChart');
+  if(el&&pts.length)charts.opt=new Chart(el,{type:'line',data:{labels:pts.map(p2=>p2.x),datasets:[{data:pts.map(p2=>p2.y),borderColor:'#2456D6',backgroundColor:'rgba(36,86,214,.06)',fill:true,borderWidth:2,pointRadius:3,tension:.1}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+    scales:{x:{ticks:{font:{family:'IBM Plex Mono',size:10},color:'#8B93A2'},grid:{display:false}},y:{ticks:{font:{family:'IBM Plex Mono',size:10},color:'#8B93A2'},grid:{color:'#EDEFF3'}}}}});
+  else if(el)el.parentElement.innerHTML='<div class="empty">Chart appears after your first closed trade.</div>';
+}
+function ledgerFlowsOnly(p){
+  const fl=[...p.flows].sort((a,b)=>a.date<b.date?1:-1);
+  let html=`<div class="panel"><div class="phead"><h2>Capital movements</h2></div>`;
+  if(!fl.length)return html+`<div class="empty">No capital injections logged.</div></div>`;
+  html+=`<table><tr><th>Date</th><th style="text-align:left">Type</th><th style="text-align:left">Note</th><th>Amount</th><th></th></tr>`;
+  for(const f of fl)html+=`<tr><td>${f.date}</td><td class="tx" style="text-align:left"><span class="badge ${f.type==='deposit'?'b-dep':'b-wd'}">${f.type==='deposit'?'Deposit':'Withdraw'}</span></td>
+    <td class="tx" style="text-align:left">${esc(f.note||'')}</td><td>${fmt(+f.amount,f.ccy||p.ccy)}</td>
+    <td><button class="icoBtn" onclick="openFlow('${p.id}','${f.id}')">✎</button><button class="icoBtn" onclick="delFlow('${p.id}','${f.id}')">✕</button></td></tr>`;
+  return html+`</table></div>`;
+}
+
+/* ============ all portfolios ============ */
+function renderAll(){
+  let html=`<div class="panel"><div class="phead"><h2>All portfolios</h2><div class="pills">${rangePills()}</div></div>
+  <table><tr><th>Portfolio</th><th style="text-align:left">Type</th><th>Value</th><th>Cash</th><th>Injected</th><th>TWR · ${ui.range}</th><th>Sharpe</th><th>Max DD</th><th>Realized P&L</th></tr>`;
+  for(const p of state.portfolios){
+    if(p.type==='stocks'){
+      const axis=axisDates(p,rangeStart(ui.range));
+      const{V,F}=axis.length?valueSeries(p,axis):{V:[],F:[]};
+      const twr=twrSeries(V,F), t=twr.length?twr[twr.length-1]:null;
+      const st=riskStats(dailyRets(V,F),benchDailyRets(p.benchmark,axis));
+      const h=holdings(p); const mv={}; let realized=0;
+      for(const k in h){realized+=h[k].realized*fxNow(h[k].ccy,p.ccy); if(h[k].sh>0){const px=lastPx(k);if(px)mv[h[k].ccy]=(mv[h[k].ccy]||0)+h[k].sh*px;}}
+      html+=`<tr><td class="tx" style="text-align:left;cursor:pointer" onclick="setTab('${p.id}')"><b>${esc(p.name)}</b></td>
+        <td class="tx" style="text-align:left;color:var(--sub)">stocks</td>
+        <td>${multiCcyVal(mv,p.ccy)}</td><td>${multiCcyVal(cashByCcy(p),p.ccy)}</td><td>${multiCcyVal(injectedByCcy(p),p.ccy)}</td>
+        <td class="${pctCls(t)}">${fmtPct(t)}</td><td>${st?.sharpe==null?'—':st.sharpe.toFixed(2)}</td>
+        <td class="${st?pctCls(st.mdd):''}">${st?fmtPct(st.mdd):'—'}</td><td class="${pctCls(realized)}">${fmt(realized,p.ccy)}</td></tr>`;
+    }else{
+      const closed=p.txns.filter(t=>optPL(t)!=null); const realized=closed.reduce((s,t)=>s+optPL(t),0);
+      html+=`<tr><td class="tx" style="text-align:left;cursor:pointer" onclick="setTab('${p.id}')"><b>${esc(p.name)}</b></td>
+        <td class="tx" style="text-align:left;color:var(--sub)">options</td><td>—</td><td>—</td>
+        <td>${multiCcyVal(injectedByCcy(p),p.ccy)}</td><td>—</td><td>—</td><td>—</td><td class="${pctCls(realized)}">${fmt(realized,p.ccy)}</td></tr>`;
+    }
+  }
+  html+=`</table><p class="hint" style="margin-top:10px">Values shown in each portfolio's own currency — no cross-currency total, by design.</p></div>`;
+  $('#view').innerHTML=html;
+}
+
+/* ============ modals & forms ============ */
+function openModal(html){$('#modal').innerHTML=`<div class="ov" onclick="if(event.target===this)closeModal()"><div class="mb">${html}</div></div>`;}
+function closeModal(){$('#modal').innerHTML='';}
+let formSide='buy', formFlow='deposit';
+function segTrade(s){formSide=s;$('#segB').className=s==='buy'?'selB':'';$('#segS').className=s==='sell'?'selS':'';}
+function segFlow(s){formFlow=s;$('#segD').className=s==='deposit'?'selD':'';$('#segW').className=s==='withdraw'?'selW':'';}
+
+function openTrade(pid,txId){
+  const p=pf(pid), t=txId?p.txns.find(x=>x.id===txId):null;
+  formSide=t?.side||'buy';
+  openModal(`<h3>${t?'Edit':'Add'} trade — ${esc(p.name)}</h3>
+    <div class="seg"><button id="segB" class="${formSide==='buy'?'selB':''}" onclick="segTrade('buy')">Buy</button>
+    <button id="segS" class="${formSide==='sell'?'selS':''}" onclick="segTrade('sell')">Sell</button></div>
+    <div class="field"><label>Ticker (Yahoo format)</label><input id="f_tick" value="${esc(t?.ticker||'')}" placeholder="AAPL · D05.SI · 0700.HK" style="text-transform:uppercase">
+    <div class="hint">Suffix sets the currency: .SI = SGD, .HK = HKD, none = USD</div></div>
+    <div class="frow"><div class="field"><label>Shares</label><input id="f_sh" type="number" step="any" value="${t?.shares??''}"></div>
+    <div class="field"><label>Price per share</label><input id="f_px" type="number" step="any" value="${t?.price??''}"></div></div>
+    <div class="frow"><div class="field"><label>Date</label><input id="f_dt" type="date" value="${t?.date||todayISO()}"></div>
+    <div class="field"><label>Fees (optional)</label><input id="f_fee" type="number" step="any" value="${t?.fees??''}"></div></div>
+    <div class="mfoot"><button onclick="closeModal()">Cancel</button><button class="pri" onclick="saveTrade('${pid}','${txId||''}')">Save trade</button></div>`);
+}
+function saveTrade(pid,txId){
+  const p=pf(pid);
+  const ticker=$('#f_tick').value.trim().toUpperCase(), shares=parseFloat($('#f_sh').value), price=parseFloat($('#f_px').value);
+  const date=$('#f_dt').value, fees=parseFloat($('#f_fee').value)||0;
+  if(!ticker||!(shares>0)||!(price>=0)||!date)return alert('Ticker, shares, price and date are required.');
+  const rec={id:txId||uid(),side:formSide,ticker,shares,price,date,fees};
+  if(txId){const i=p.txns.findIndex(x=>x.id===txId);p.txns[i]=rec;}else p.txns.push(rec);
+  save();closeModal();
+  if(!prices[ticker])refreshPrices(false);else render();
+}
+function delTxn(pid,id){if(!confirm('Delete this entry?'))return;const p=pf(pid);p.txns=p.txns.filter(x=>x.id!==id);save();render();}
+function delFlow(pid,id){if(!confirm('Delete this capital entry?'))return;const p=pf(pid);p.flows=p.flows.filter(x=>x.id!==id);save();render();}
+
+function openFlow(pid,fid){
+  const p=pf(pid), f=fid?p.flows.find(x=>x.id===fid):null;
+  formFlow=f?.type||'deposit';
+  const ccys=['USD','SGD','HKD','EUR','GBP','AUD'];
+  openModal(`<h3>${f?'Edit':'Add'} capital — ${esc(p.name)}</h3>
+    <div class="seg"><button id="segD" class="${formFlow==='deposit'?'selD':''}" onclick="segFlow('deposit')">Deposit</button>
+    <button id="segW" class="${formFlow==='withdraw'?'selW':''}" onclick="segFlow('withdraw')">Withdraw</button></div>
+    <div class="frow"><div class="field"><label>Amount</label><input id="f_amt" type="number" step="any" value="${f?.amount??''}"></div>
+    <div class="field"><label>Currency</label><select id="f_ccy">${ccys.map(c=>`<option ${(f?.ccy||p.ccy)===c?'selected':''}>${c}</option>`).join('')}</select></div></div>
+    <div class="frow"><div class="field"><label>Date</label><input id="f_dt" type="date" value="${f?.date||todayISO()}"></div>
+    <div class="field"><label>Note (optional)</label><input id="f_note" value="${esc(f?.note||'')}" placeholder="Monthly savings"></div></div>
+    <div class="note">Adds to your cash balance and cost base. Time-weighted return is unaffected — injections never count as performance.</div>
+    <div class="mfoot"><button onclick="closeModal()">Cancel</button><button class="pri" onclick="saveFlow('${pid}','${fid||''}')">Save</button></div>`);
+}
+function saveFlow(pid,fid){
+  const p=pf(pid), amount=parseFloat($('#f_amt').value);
+  if(!(amount>0)||!$('#f_dt').value)return alert('Amount and date are required.');
+  const rec={id:fid||uid(),type:formFlow,amount,ccy:$('#f_ccy').value,date:$('#f_dt').value,note:$('#f_note').value.trim()};
+  if(fid){const i=p.flows.findIndex(x=>x.id===fid);p.flows[i]=rec;}else p.flows.push(rec);
+  save();closeModal();
+  const s=fxSym(rec.ccy,p.ccy);
+  if(s&&!prices[s])refreshPrices(false);else render();
+}
+
+let optPos='long', optCP='call';
+function segOpt(k,v){if(k==='pos'){optPos=v;$('#segL').className=v==='long'?'selB':'';$('#segSh').className=v==='short'?'selS':'';}
+  else{optCP=v;$('#segC').className=v==='call'?'selD':'';$('#segP').className=v==='put'?'selW':'';}}
+function openOpt(pid,txId){
+  const p=pf(pid), t=txId?p.txns.find(x=>x.id===txId):null;
+  optPos=t?.pos||'long'; optCP=t?.cp||'call';
+  openModal(`<h3>${t?'Edit':'Add'} option trade — ${esc(p.name)}</h3>
+    <div class="seg"><button id="segL" class="${optPos==='long'?'selB':''}" onclick="segOpt('pos','long')">Long (bought)</button>
+    <button id="segSh" class="${optPos==='short'?'selS':''}" onclick="segOpt('pos','short')">Short (sold)</button></div>
+    <div class="seg"><button id="segC" class="${optCP==='call'?'selD':''}" onclick="segOpt('cp','call')">Call</button>
+    <button id="segP" class="${optCP==='put'?'selW':''}" onclick="segOpt('cp','put')">Put</button></div>
+    <div class="frow3"><div class="field"><label>Underlying</label><input id="o_und" value="${esc(t?.underlying||'')}" placeholder="RDDT" style="text-transform:uppercase"></div>
+    <div class="field"><label>Strike</label><input id="o_str" type="number" step="any" value="${t?.strike??''}"></div>
+    <div class="field"><label>Expiry</label><input id="o_exp" type="date" value="${t?.expiry||''}"></div></div>
+    <div class="frow3"><div class="field"><label>Contracts</label><input id="o_ctr" type="number" step="1" value="${t?.contracts??1}"></div>
+    <div class="field"><label>Multiplier</label><input id="o_mult" type="number" step="1" value="${t?.mult??100}"></div>
+    <div class="field"><label>Fees (total)</label><input id="o_fee" type="number" step="any" value="${t?.fees??''}"></div></div>
+    <div class="frow"><div class="field"><label>Open date</label><input id="o_od" type="date" value="${t?.openDate||todayISO()}"></div>
+    <div class="field"><label>Open premium /share</label><input id="o_op" type="number" step="any" value="${t?.openPremium??''}"></div></div>
+    <div class="frow"><div class="field"><label>Close date (blank = open)</label><input id="o_cd" type="date" value="${t?.closeDate||''}"></div>
+    <div class="field"><label>Close premium /share</label><input id="o_cp" type="number" step="any" value="${t?.closePremium??''}" placeholder="0 if expired worthless"></div></div>
+    <div class="mfoot"><button onclick="closeModal()">Cancel</button><button class="pri" onclick="saveOpt('${pid}','${txId||''}')">Save trade</button></div>`);
+}
+function saveOpt(pid,txId){
+  const p=pf(pid);
+  const und=$('#o_und').value.trim().toUpperCase(), strike=parseFloat($('#o_str').value), op=parseFloat($('#o_op').value);
+  if(!und||isNaN(strike)||isNaN(op)||!$('#o_od').value)return alert('Underlying, strike, open date and open premium are required.');
+  const cpv=$('#o_cp').value;
+  const rec={id:txId||uid(),underlying:und,cp:optCP,pos:optPos,strike,expiry:$('#o_exp').value,
+    contracts:parseInt($('#o_ctr').value)||1,mult:parseInt($('#o_mult').value)||100,fees:parseFloat($('#o_fee').value)||0,
+    openDate:$('#o_od').value,openPremium:op,closeDate:$('#o_cd').value||null,closePremium:cpv===''?null:parseFloat(cpv)};
+  if(rec.closePremium!=null&&!rec.closeDate)rec.closeDate=todayISO();
+  if(txId){const i=p.txns.findIndex(x=>x.id===txId);p.txns[i]=rec;}else p.txns.push(rec);
+  save();closeModal();render();
+}
+
+function openNewPortfolio(){
+  openModal(`<h3>New portfolio</h3>
+    <div class="field"><label>Name</label><input id="np_name" placeholder="e.g. Long-term SG dividends"></div>
+    <div class="frow"><div class="field"><label>Type</label><select id="np_type"><option value="stocks">Stocks / ETFs</option><option value="options">Options (manual P&L log)</option></select></div>
+    <div class="field"><label>Display currency</label><select id="np_ccy">${['USD','SGD','HKD','EUR','GBP','AUD'].map(c=>`<option>${c}</option>`).join('')}</select></div></div>
+    <div class="field"><label>Benchmark</label><select id="np_bm">${BENCHMARKS.map(b=>`<option value="${b[0]}">${b[1]}</option>`).join('')}</select></div>
+    <div class="mfoot"><button onclick="closeModal()">Cancel</button><button class="pri" onclick="saveNewPortfolio()">Create</button></div>`);
+}
+function saveNewPortfolio(){
+  const name=$('#np_name').value.trim(); if(!name)return alert('Give it a name.');
+  const p={id:uid(),name,type:$('#np_type').value,ccy:$('#np_ccy').value,benchmark:$('#np_bm').value,txns:[],flows:[]};
+  state.portfolios.push(p);save();ui.tab=p.id;closeModal();render();refreshPrices(false);
+}
+function openSettings(pid){
+  const p=pf(pid);
+  openModal(`<h3>Portfolio settings</h3>
+    <div class="field"><label>Name</label><input id="s_name" value="${esc(p.name)}"></div>
+    <div class="frow"><div class="field"><label>Display currency</label><select id="s_ccy">${['USD','SGD','HKD','EUR','GBP','AUD'].map(c=>`<option ${p.ccy===c?'selected':''}>${c}</option>`).join('')}</select></div>
+    <div class="field"><label>Benchmark</label><select id="s_bm">${BENCHMARKS.map(b=>`<option value="${b[0]}" ${p.benchmark===b[0]?'selected':''}>${b[1]}</option>`).join('')}</select></div></div>
+    <div class="mfoot"><button class="danger" onclick="delPortfolio('${pid}')">Delete portfolio</button>
+    <button onclick="closeModal()">Cancel</button><button class="pri" onclick="saveSettings('${pid}')">Save</button></div>`);
+}
+function saveSettings(pid){const p=pf(pid);p.name=$('#s_name').value.trim()||p.name;p.ccy=$('#s_ccy').value;p.benchmark=$('#s_bm').value;save();closeModal();refreshPrices(false);}
+function delPortfolio(pid){const p=pf(pid);if(!confirm(`Delete "${p.name}" and all its ${p.txns.length} transactions? This cannot be undone.`))return;
+  state.portfolios=state.portfolios.filter(x=>x.id!==pid);save();ui.tab=state.portfolios[0]?.id||'ALL';closeModal();render();}
+
+/* ============ import / export ============ */
+function exportJSON(){
+  const blob=new Blob([JSON.stringify({exported:new Date().toISOString(),state},null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`ledger-backup-${todayISO()}.json`;a.click();URL.revokeObjectURL(a.href);
+}
+function openImport(){
+  openModal(`<h3>Import backup</h3>
+    <div class="note" style="margin-bottom:14px">Restores portfolios and transactions from a Ledger JSON export. This replaces everything currently stored.</div>
+    <input type="file" id="imp_file" accept=".json">
+    <div class="mfoot"><button onclick="closeModal()">Cancel</button><button class="pri" onclick="doImport()">Import</button></div>`);
+}
+function doImport(){
+  const f=$('#imp_file').files[0]; if(!f)return alert('Choose a file first.');
+  const r=new FileReader();
+  r.onload=()=>{try{const j=JSON.parse(r.result);const s=j.state||j;
+    if(!Array.isArray(s.portfolios))throw new Error('bad format');
+    if(!confirm('Replace all current data with this backup?'))return;
+    state=s;save();ui.tab=state.portfolios[0]?.id||'ALL';closeModal();render();refreshPrices(false);
+  }catch(e){alert('Could not read that file — is it a Ledger export?');}};
+  r.readAsText(f);
+}
+
+/* ============ init ============ */
+render();
+const anyStale=neededSymbols().some(s=>!prices[s]||(Date.now()-prices[s].t)>12*3600*1000);
+if(anyStale)refreshPrices(false);else setStatus('Prices cached · '+new Date(Math.max(...neededSymbols().map(s=>prices[s]?.t||0))).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}));
+</script>
+</body>
+</html>
