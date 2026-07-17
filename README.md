@@ -2,12 +2,17 @@
 
 A browser-based investment tracker with TWR/XIRR performance, risk analytics (Sharpe, Sortino, alpha, beta, max drawdown), allocation charts, and benchmark comparison. All data stays in your browser's localStorage.
 
+- **Overview dashboard** — first tab, consolidates every portfolio: total value/cash/P&L converted to a base currency of your choice, a combined TWR chart vs the S&P 500, consolidated holdings and allocation (by ticker, sector, or portfolio), a per-portfolio summary table, and a merged, filterable history of every transaction and capital flow across all portfolios.
+- **Chart designs** — pick a design (Classic / Vibrant / Minimal / Bars) from the top bar; it changes the performance chart type/colors and the allocation chart type (doughnut/pie/bar) everywhere in the app.
+- **Sector allocation** — each portfolio's Holdings panel (and the Overview allocation chart) can toggle between "by ticker" and "by sector". Sector data is fetched from Yahoo Finance and cached locally; falls back to "Unknown" when unavailable.
+
 ## Project structure
 
 ```
 ledger-tracker/
 ├── api/
-│   └── chart.js          # Vercel serverless function — proxies Yahoo Finance
+│   ├── chart.js           # Vercel serverless function — proxies Yahoo Finance price history
+│   └── quote.js            # Vercel serverless function — proxies Yahoo Finance sector/industry data
 ├── public/
 │   └── index.html         # The entire app (single HTML file)
 ├── vercel.json            # Routing and cache config

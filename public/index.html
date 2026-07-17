@@ -130,6 +130,12 @@ td .tick{font-family:'IBM Plex Mono'; font-weight:600; font-size:12.5px;}
     <div class="brand"><h1>Ledger</h1><span>personal portfolio tracker</span></div>
     <div class="topbtns">
       <span class="status" id="status">—</span>
+      <select id="chartDesignSel" onchange="setChartPreset(this.value)" style="width:auto;padding:6px 9px;font-size:12px" title="Chart design">
+        <option value="classic">Classic</option>
+        <option value="vibrant">Vibrant</option>
+        <option value="minimal">Minimal</option>
+        <option value="bars">Bars</option>
+      </select>
       <button class="sm" onclick="refreshPrices(true)" id="refreshBtn">↻ Refresh prices</button>
       <button class="sm ghost" onclick="exportJSON()">Export</button>
       <button class="sm ghost" onclick="openImport()">Import</button>
@@ -154,7 +160,7 @@ function pctCls(x){return x>0?'pos':x<0?'neg':'';}
 function dISO(d){return d.toISOString().slice(0,10);}
 
 /* ============ state ============ */
-const LS_KEY='ledger_state_v1', PX_KEY='ledger_prices_v1';
+const LS_KEY='ledger_state_v1', PX_KEY='ledger_prices_v1', CP_KEY='ledger_chartprefs_v1', SEC_KEY='ledger_sectors_v1';
 const BENCHMARKS=[['^GSPC','S&P 500'],['^NDX','Nasdaq 100'],['^DJI','Dow Jones'],['^STI','STI (Singapore)'],['^HSI','HSI (Hong Kong)'],['SPY','SPY ETF'],['QQQ','QQQ ETF'],['VT','VT (World)']];
 function seedState(){return{portfolios:[
   {id:uid(),name:'US stocks',type:'stocks',ccy:'USD',benchmark:'^GSPC',txns:[],flows:[]},
@@ -163,10 +169,14 @@ function seedState(){return{portfolios:[
 ]};}
 let state; try{state=JSON.parse(localStorage.getItem(LS_KEY))||seedState();}catch(e){state=seedState();}
 let prices; try{prices=JSON.parse(localStorage.getItem(PX_KEY))||{};}catch(e){prices={};}
-let ui={tab:state.portfolios[0].id, range:'YTD'};
+let chartPrefs; try{chartPrefs=Object.assign({preset:'classic',allocBy:'ticker'},JSON.parse(localStorage.getItem(CP_KEY))||{});}catch(e){chartPrefs={preset:'classic',allocBy:'ticker'};}
+let sectors; try{sectors=JSON.parse(localStorage.getItem(SEC_KEY))||{};}catch(e){sectors={};}
+let ui={tab:'OVERVIEW', range:'YTD', baseCcy:'USD', ovFilter:'ALL'};
 let charts={};
 function save(){localStorage.setItem(LS_KEY,JSON.stringify(state));}
 function savePx(){try{localStorage.setItem(PX_KEY,JSON.stringify(prices));}catch(e){console.warn('price cache too large',e);}}
+function saveChartPrefs(){localStorage.setItem(CP_KEY,JSON.stringify(chartPrefs));}
+function saveSectors(){try{localStorage.setItem(SEC_KEY,JSON.stringify(sectors));}catch(e){console.warn('sector cache too large',e);}}
 function pf(id){return state.portfolios.find(p=>p.id===id);}
 
 /* ============ price data (Yahoo via CORS proxies) ============ */
@@ -208,6 +218,7 @@ function neededSymbols(){
   const set=new Set();
   for(const p of state.portfolios){
     if(p.benchmark)set.add(p.benchmark);
+    const bs=fxSym(p.ccy,ui.baseCcy);if(bs)set.add(bs);
     if(p.type!=='stocks')continue;
     const ccys=new Set();
     for(const t of p.txns){set.add(t.ticker.toUpperCase());ccys.add(ccyOf(t.ticker));}
@@ -215,6 +226,11 @@ function neededSymbols(){
     for(const c of ccys){const s=fxSym(c,p.ccy);if(s)set.add(s);}
   }
   ['^GSPC','^NDX','^STI','^HSI'].forEach(s=>set.add(s));
+  return[...set];
+}
+function heldTickers(){ // tickers with open positions, across stocks portfolios
+  const set=new Set();
+  for(const p of state.portfolios){if(p.type!=='stocks')continue;const h=holdings(p);for(const k in h)if(h[k].sh>1e-9)set.add(k);}
   return[...set];
 }
 let refreshing=false;
@@ -231,7 +247,16 @@ async function refreshPrices(force){
     if(d)prices[s]=d; else fail++;
     done++;
   }
-  savePx(); refreshing=false;
+  savePx();
+  // sector lookups for currently held tickers — cached ~weekly, independent of price force flag
+  const secTodo=heldTickers().filter(s=>!sectors[s]||(Date.now()-sectors[s].t)>7*24*3600*1000);
+  for(let i=0;i<secTodo.length;i++){
+    setStatus(`Fetching sector for ${secTodo[i]} (${i+1}/${secTodo.length})…`);
+    const d=await fetchSector(secTodo[i]);
+    if(d)sectors[secTodo[i]]=d;
+  }
+  if(secTodo.length)saveSectors();
+  refreshing=false;
   if(btn)btn.textContent='↻ Refresh prices';
   setStatus(todo.length?(fail?`Updated · ${fail} symbol(s) failed`:`Prices updated ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}`):'Prices up to date');
   render();
@@ -239,6 +264,28 @@ async function refreshPrices(force){
 function setStatus(s){const el=$('#status');if(el)el.textContent=s;}
 function lastPx(sym){return prices[sym]?.last??null;}
 function fxNow(from,to){if(from===to)return 1;const s=fxSym(from,to);const v=prices[s]?.last;return v||1;}
+async function fetchSector(sym){
+  if(IS_HOSTED){
+    try{
+      const r=await fetch(`/api/quote?symbol=${encodeURIComponent(sym)}`,{signal:AbortSignal.timeout(15000)});
+      if(r.ok){const j=await r.json();return parseSector(j);}
+    }catch(e){/* fall through */}
+    return null;
+  }
+  const url=`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(sym)}?modules=assetProfile`;
+  for(const wrap of PROXIES){
+    try{
+      const r=await fetch(wrap(url),{signal:AbortSignal.timeout(12000)});
+      if(!r.ok)continue;
+      const j=await r.json(); const d=parseSector(j); if(d)return d;
+    }catch(e){/* try next proxy */}
+  }
+  return null;
+}
+function parseSector(j){
+  const p=j?.quoteSummary?.result?.[0]?.assetProfile; if(!p)return null;
+  return{t:Date.now(),sector:p.sector||'Unknown',industry:p.industry||''};
+}
 
 /* ============ computations ============ */
 function sortedTxns(p){return[...p.txns].sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);}
@@ -389,9 +436,26 @@ function optPL(t){if(t.closePremium==null||t.closePremium==='')return null;
   const dir=t.pos==='long'?1:-1;return(+t.closePremium-+t.openPremium)*dir*+t.contracts*+(t.mult||100)-+(t.fees||0);}
 function optOpenAmt(t){return +t.openPremium*+t.contracts*+(t.mult||100);}
 
+/* ============ chart design presets ============ */
+const CHART_PRESETS={
+  classic:{label:'Classic',perfType:'line',fill:true,perfColor:'#0B8A5C',benchColor:'#98A1B0',allocType:'doughnut',
+    palette:['#0B8A5C','#2456D6','#B87514','#7A4FD1','#CC3D3D','#0E8FA3','#C2478F','#5E7A1E','#8A5A2B','#4A5A72']},
+  vibrant:{label:'Vibrant',perfType:'line',fill:false,perfColor:'#7A4FD1',benchColor:'#E8A33D',allocType:'pie',
+    palette:['#7A4FD1','#E8A33D','#2FB6A3','#E8547A','#4C8DF0','#8FCB4B','#F0724C','#3FA9E0','#C24BC2','#6C7A89']},
+  minimal:{label:'Minimal',perfType:'line',fill:false,perfColor:'#161D29',benchColor:'#B7BEC9',allocType:'doughnut',
+    palette:['#161D29','#3A4658','#5A6373','#7C8494','#9CA3B0','#B7BEC9','#D2D7DF','#8B93A2','#4A5A72','#2A3547']},
+  bars:{label:'Bars',perfType:'bar',fill:true,perfColor:'#2456D6',benchColor:'#B9C1CD',allocType:'bar',
+    palette:['#2456D6','#0B8A5C','#B87514','#CC3D3D','#7A4FD1','#0E8FA3','#C2478F','#5E7A1E','#8A5A2B','#4A5A72']}
+};
+function curPreset(){return CHART_PRESETS[chartPrefs.preset]||CHART_PRESETS.classic;}
+function setChartPreset(v){chartPrefs.preset=v;saveChartPrefs();render();}
+function setAllocBy(v){chartPrefs.allocBy=v;saveChartPrefs();render();}
+function setBaseCcy(c){ui.baseCcy=c;const need=neededSymbols().filter(s=>!prices[s]);render();if(need.length)refreshPrices(false);}
+
 /* ============ rendering ============ */
 const RANGES=['1W','MTD','1M','3M','6M','YTD','1Y'];
-function render(){renderTape();renderTabs();renderView();}
+function render(){renderTape();renderTabs();renderView();syncTopControls();}
+function syncTopControls(){const sel=$('#chartDesignSel');if(sel)sel.value=chartPrefs.preset;}
 function renderTape(){
   const items=[['^GSPC','S&P 500'],['^NDX','NDX'],['^STI','STI'],['^HSI','HSI']];
   $('#tape').innerHTML=items.map(([s,n])=>{
@@ -402,15 +466,15 @@ function renderTape(){
 }
 function renderTabs(){
   const t=state.portfolios.map(p=>`<button class="tab ${ui.tab===p.id?'on':''}" onclick="setTab('${p.id}')">${esc(p.name)}</button>`).join('');
-  $('#tabs').innerHTML=t+`<button class="tab ${ui.tab==='ALL'?'on':''}" onclick="setTab('ALL')">All portfolios</button><button class="tab plus" onclick="openNewPortfolio()">+ New</button>`;
+  $('#tabs').innerHTML=`<button class="tab ${ui.tab==='OVERVIEW'?'on':''}" onclick="setTab('OVERVIEW')">Overview</button>`+t+`<button class="tab plus" onclick="openNewPortfolio()">+ New</button>`;
 }
 function setTab(id){ui.tab=id;render();}
 function setRange(r){ui.range=r;render();}
 function destroyCharts(){for(const k in charts){charts[k].destroy();delete charts[k];}}
 function renderView(){
   destroyCharts();
-  if(ui.tab==='ALL')return renderAll();
-  const p=pf(ui.tab); if(!p){ui.tab=state.portfolios[0]?.id;return p?renderView():($('#view').innerHTML='');}
+  if(ui.tab==='OVERVIEW')return renderOverview();
+  const p=pf(ui.tab); if(!p){ui.tab='OVERVIEW';return renderView();}
   p.type==='options'?renderOptions(p):renderStocks(p);
 }
 function rangePills(){return RANGES.map(r=>`<button class="pill ${ui.range===r?'on':''}" onclick="setRange('${r}')">${r}</button>`).join('');}
@@ -455,8 +519,8 @@ function renderStocks(p){
 
   html+=`<div class="panel"><div class="phead"><h2>Performance vs ${esc(benchName)}</h2>
     <div class="pills">${rangePills()}</div></div>
-    <div class="legend"><span><span class="swatch" style="background:#0B8A5C"></span>Portfolio (TWR)</span>
-    <span><span class="swatch" style="background:#98A1B0"></span>${esc(benchName)}</span>
+    <div class="legend"><span><span class="swatch" style="background:${curPreset().perfColor}"></span>Portfolio (TWR)</span>
+    <span><span class="swatch" style="background:${curPreset().benchColor}"></span>${esc(benchName)}</span>
     ${multiCcy?`<span style="color:var(--mut)">non-${p.ccy} legs converted at daily FX</span>`:''}</div>
     <div class="chartbox"><canvas id="perfChart"></canvas></div></div>`;
 
@@ -480,7 +544,12 @@ function renderStocks(p){
       ${mrow('Best day',`<span class="pos">${fmtPct(st.best)}</span>`)}
       ${mrow('Worst day',`<span class="neg">${fmtPct(st.worst)}</span>`)}
     </div>
-    <div><div class="mrow mhead"><span>Allocation by holding</span><span></span><span></span></div>
+    <div><div class="mrow mhead" style="display:flex;justify-content:space-between;align-items:center">
+      <span>Allocation</span>
+      <span style="display:flex;gap:4px">
+        <button class="pill ${chartPrefs.allocBy==='ticker'?'on':''}" style="padding:3px 9px;font-size:11px" onclick="setAllocBy('ticker')">Ticker</button>
+        <button class="pill ${chartPrefs.allocBy==='sector'?'on':''}" style="padding:3px 9px;font-size:11px" onclick="setAllocBy('sector')">Sector</button>
+      </span></div>
       <div style="height:210px;position:relative;margin-top:8px"><canvas id="allocChart"></canvas></div></div></div>`;
     // monthly returns (trailing 1Y)
     const mr=monthlyReturns(p);
@@ -536,32 +605,59 @@ function ledgerPanel(p){
     html+=`</table>`;}
   return html+`</div>`;
 }
-function drawPerf(axis,twr,bench,benchName){
-  const el=document.getElementById('perfChart'); if(!el||!axis.length)return;
+function drawPerf(axis,twr,bench,benchName,elId,chartKey){
+  elId=elId||'perfChart'; chartKey=chartKey||'perf';
+  const el=document.getElementById(elId); if(!el||!axis.length)return;
   const labels=axis.map(d=>d.slice(5));
-  charts.perf=new Chart(el,{type:'line',data:{labels,datasets:[
-    {label:'Portfolio',data:twr.map(x=>x*100),borderColor:'#0B8A5C',backgroundColor:'rgba(11,138,92,.06)',fill:true,borderWidth:2,pointRadius:0,tension:.15},
-    {label:benchName,data:bench.map(x=>x==null?null:x*100),borderColor:'#98A1B0',borderWidth:1.6,pointRadius:0,tension:.15}]},
+  const cp=curPreset(), isBar=cp.perfType==='bar';
+  const mkDs=(label,data,color,isBench)=>isBar?
+    {label,data,backgroundColor:color+(isBench?'66':'CC'),borderColor:color,borderWidth:isBench?0:1,borderRadius:2,barPercentage:isBench?0.9:0.55}:
+    {label,data,borderColor:color,backgroundColor:(!isBench&&cp.fill)?color+'0f':'transparent',fill:!isBench&&cp.fill,borderWidth:isBench?1.6:2,pointRadius:0,tension:.15};
+  charts[chartKey]=new Chart(el,{type:isBar?'bar':'line',data:{labels,datasets:[
+    mkDs('Portfolio',twr.map(x=>x*100),cp.perfColor,false),
+    mkDs(benchName,bench.map(x=>x==null?null:x*100),cp.benchColor,true)]},
     options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
       plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${c.parsed.y==null?'—':(c.parsed.y>0?'+':'')+c.parsed.y.toFixed(2)}%`}}},
       scales:{x:{ticks:{maxTicksLimit:8,font:{family:'IBM Plex Mono',size:10},color:'#8B93A2'},grid:{display:false}},
               y:{ticks:{callback:v=>v+'%',font:{family:'IBM Plex Mono',size:10},color:'#8B93A2'},grid:{color:'#EDEFF3'}}}}});
 }
-const ALLOC_COLORS=['#0B8A5C','#2456D6','#B87514','#7A4FD1','#CC3D3D','#0E8FA3','#C2478F','#5E7A1E','#8A5A2B','#4A5A72'];
-function drawAlloc(p,h){
-  const el=document.getElementById('allocChart'); if(!el)return;
-  const items=Object.keys(h).filter(k=>h[k].sh>1e-9).map(k=>{
-    const px=lastPx(k);return{k,v:px?h[k].sh*px*fxNow(h[k].ccy,p.ccy):0};}).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);
+function allocItems(p,h,by){ // by: 'ticker'|'sector'
+  const rows=Object.keys(h).filter(k=>h[k].sh>1e-9).map(k=>{
+    const px=lastPx(k);return{k,sector:sectors[k]?.sector||'Unknown',v:px?h[k].sh*px*fxNow(h[k].ccy,p.ccy):0};}).filter(x=>x.v>0);
   const cash=cashByCcy(p);const cashV=Object.keys(cash).reduce((s,c)=>s+Math.max(0,cash[c])*fxNow(c,p.ccy),0);
+  if(by==='sector'){
+    const m={}; rows.forEach(r=>{m[r.sector]=(m[r.sector]||0)+r.v;});
+    const items=Object.entries(m).map(([k,v])=>({k,v})).sort((a,b)=>b.v-a.v);
+    if(cashV>0.01)items.push({k:'Cash',v:cashV});
+    return items;
+  }
+  const items=rows.map(r=>({k:r.k,v:r.v})).sort((a,b)=>b.v-a.v);
   if(cashV>0.01)items.push({k:'Cash',v:cashV});
+  return items;
+}
+function drawAllocGeneric(elId,items,ccy,chartKey){
+  const el=document.getElementById(elId); if(!el)return;
   if(!items.length){el.parentElement.innerHTML='<div class="empty">No positions to allocate.</div>';return;}
-  const total=items.reduce((s,x)=>s+x.v,0);
-  charts.alloc=new Chart(el,{type:'doughnut',data:{labels:items.map(x=>x.k),
-    datasets:[{data:items.map(x=>x.v),backgroundColor:items.map((x,i)=>x.k==='Cash'?'#C6CCD6':ALLOC_COLORS[i%ALLOC_COLORS.length]),borderWidth:2,borderColor:'#fff'}]},
-    options:{responsive:true,maintainAspectRatio:false,cutout:'62%',
+  const cp=curPreset(), total=items.reduce((s,x)=>s+x.v,0);
+  const colors=items.map((x,i)=>x.k==='Cash'?'#C6CCD6':cp.palette[i%cp.palette.length]);
+  if(cp.allocType==='bar'){
+    charts[chartKey]=new Chart(el,{type:'bar',data:{labels:items.map(x=>x.k),datasets:[{data:items.map(x=>x.v),backgroundColor:colors,borderRadius:3}]},
+      options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
+        tooltip:{callbacks:{label:c=>` ${fmt(c.parsed.x,ccy)} · ${(c.parsed.x/total*100).toFixed(1)}%`}}},
+        scales:{x:{ticks:{callback:v=>fmtN(v,0),font:{family:'IBM Plex Mono',size:10},color:'#8B93A2'},grid:{color:'#EDEFF3'}},
+                y:{ticks:{font:{family:'IBM Plex Sans',size:11},color:'#5A6373'},grid:{display:false}}}}});
+    return;
+  }
+  charts[chartKey]=new Chart(el,{type:cp.allocType,data:{labels:items.map(x=>x.k),
+    datasets:[{data:items.map(x=>x.v),backgroundColor:colors,borderWidth:2,borderColor:'#fff'}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:cp.allocType==='doughnut'?'62%':0,
       plugins:{legend:{position:'right',labels:{boxWidth:10,font:{family:'IBM Plex Sans',size:11},color:'#5A6373',
         generateLabels:c=>c.data.labels.map((l,i)=>({text:`${l}  ${(c.data.datasets[0].data[i]/total*100).toFixed(1)}%`,fillStyle:c.data.datasets[0].backgroundColor[i],strokeStyle:'transparent',index:i}))}},
-      tooltip:{callbacks:{label:c=>` ${fmt(c.parsed,p.ccy)} · ${(c.parsed/total*100).toFixed(1)}%`}}}}});
+      tooltip:{callbacks:{label:c=>` ${fmt(c.parsed,ccy)} · ${(c.parsed/total*100).toFixed(1)}%`}}}}});
+}
+function drawAlloc(p,h){
+  const by=chartPrefs.allocBy==='portfolio'?'ticker':chartPrefs.allocBy;
+  drawAllocGeneric('allocChart',allocItems(p,h,by),p.ccy,'alloc');
 }
 
 /* ============ options view ============ */
@@ -630,7 +726,9 @@ function renderOptions(p){
   const seq=closed.slice().sort((a,b)=>a.closeDate<b.closeDate?-1:1);
   let cum=0; const pts=seq.map(t=>({x:t.closeDate,y:(cum+=optPL(t))}));
   const el=document.getElementById('optChart');
-  if(el&&pts.length)charts.opt=new Chart(el,{type:'line',data:{labels:pts.map(p2=>p2.x),datasets:[{data:pts.map(p2=>p2.y),borderColor:'#2456D6',backgroundColor:'rgba(36,86,214,.06)',fill:true,borderWidth:2,pointRadius:3,tension:.1}]},
+  const cpo=curPreset(), isBarO=cpo.perfType==='bar';
+  if(el&&pts.length)charts.opt=new Chart(el,{type:isBarO?'bar':'line',data:{labels:pts.map(p2=>p2.x),datasets:[{data:pts.map(p2=>p2.y),
+    borderColor:cpo.perfColor,backgroundColor:isBarO?cpo.perfColor+'CC':cpo.perfColor+'0f',fill:!isBarO&&cpo.fill,borderWidth:2,pointRadius:isBarO?0:3,borderRadius:isBarO?2:0,tension:.1}]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
     scales:{x:{ticks:{font:{family:'IBM Plex Mono',size:10},color:'#8B93A2'},grid:{display:false}},y:{ticks:{font:{family:'IBM Plex Mono',size:10},color:'#8B93A2'},grid:{color:'#EDEFF3'}}}}});
   else if(el)el.parentElement.innerHTML='<div class="empty">Chart appears after your first closed trade.</div>';
@@ -646,10 +744,187 @@ function ledgerFlowsOnly(p){
   return html+`</table></div>`;
 }
 
-/* ============ all portfolios ============ */
-function renderAll(){
-  let html=`<div class="panel"><div class="phead"><h2>All portfolios</h2><div class="pills">${rangePills()}</div></div>
-  <table><tr><th>Portfolio</th><th style="text-align:left">Type</th><th>Value</th><th>Cash</th><th>Injected</th><th>TWR · ${ui.range}</th><th>Sharpe</th><th>Max DD</th><th>Realized P&L</th></tr>`;
+/* ============ overview dashboard ============ */
+function baseCcyOptions(){return['USD','SGD','HKD','EUR','GBP','AUD','JPY','CNY'];}
+function fxSeriesTo(from,axis,to){ // daily FX from->to aligned to axis, forward-filled, falls back to latest rate
+  if(from===to)return axis.map(()=>1);
+  const filled=filledCloses(fxSym(from,to),axis), cur=fxNow(from,to);
+  return filled.map(v=>v??cur);
+}
+function combinedSeries(range){ // sum of all stocks portfolios' value series, converted to ui.baseCcy, on a shared axis
+  const stocksPf=state.portfolios.filter(p=>p.type==='stocks');
+  if(!stocksPf.length)return null;
+  const axis=axisDates({benchmark:'^GSPC',txns:[]},rangeStart(range));
+  if(!axis.length)return null;
+  const combV=new Array(axis.length).fill(0), combF=new Array(axis.length).fill(0);
+  for(const p of stocksPf){
+    const{V,F}=valueSeries(p,axis);
+    const fx=fxSeriesTo(p.ccy,axis,ui.baseCcy);
+    for(let i=0;i<axis.length;i++){combV[i]+=V[i]*fx[i];combF[i]+=F[i]*fx[i];}
+  }
+  return{axis,V:combV,F:combF};
+}
+function overviewTotals(){
+  let mv=0,cost=0,cash=0,inj=0,realized=0,missing=false;
+  for(const p of state.portfolios){
+    if(p.type==='stocks'){
+      const h=holdings(p);
+      for(const k in h){
+        const x=h[k];
+        realized+=x.realized*fxNow(x.ccy,ui.baseCcy);
+        if(x.sh>1e-9){const px=lastPx(k);if(px==null){missing=true;continue;}
+          mv+=x.sh*px*fxNow(x.ccy,ui.baseCcy); cost+=x.cost*fxNow(x.ccy,ui.baseCcy);}
+      }
+      const c=cashByCcy(p); for(const cc in c)cash+=c[cc]*fxNow(cc,ui.baseCcy);
+    }else{
+      const closed=p.txns.filter(t=>optPL(t)!=null);
+      realized+=closed.reduce((s,t)=>s+optPL(t),0)*fxNow(p.ccy,ui.baseCcy);
+    }
+    const i=injectedByCcy(p); for(const cc in i)inj+=i[cc]*fxNow(cc,ui.baseCcy);
+  }
+  return{mv,cash,inj,realized,unrealized:mv-cost,missing};
+}
+function overviewXirr(){
+  const flows=[];
+  for(const p of state.portfolios)for(const f of p.flows){
+    const amt=(+f.amount)*fxNow(f.ccy||p.ccy,ui.baseCcy);
+    flows.push({d:f.date,a:f.type==='deposit'?-amt:amt});
+  }
+  if(!flows.length)return null;
+  const t=overviewTotals(), term=t.mv+t.cash;
+  flows.push({d:todayISO(),a:term});
+  flows.sort((a,b)=>a.d<b.d?-1:1);
+  const t0=new Date(flows[0].d).getTime();
+  const npv=r=>flows.reduce((s,f)=>s+f.a/Math.pow(1+r,(new Date(f.d).getTime()-t0)/(365.25*864e5)),0);
+  let lo=-0.9999,hi=10,flo=npv(lo),fhi=npv(hi);
+  if(flo*fhi>0)return null;
+  for(let i=0;i<80;i++){const mid=(lo+hi)/2,fm=npv(mid);if(Math.abs(fm)<1e-7)return mid;(flo*fm<0)?(hi=mid,fhi=fm):(lo=mid,flo=fm);}
+  return(lo+hi)/2;
+}
+function overviewPositions(){ // one row per open ticker position per portfolio, value in ui.baseCcy
+  const rows=[];
+  for(const p of state.portfolios){
+    if(p.type!=='stocks')continue;
+    const h=holdings(p);
+    for(const k in h){const x=h[k]; if(x.sh<=1e-9)continue; const px=lastPx(k); if(px==null)continue;
+      rows.push({ticker:k,portfolio:p.name,sector:sectors[k]?.sector||'Unknown',shares:x.sh,v:x.sh*px*fxNow(x.ccy,ui.baseCcy)});}
+  }
+  return rows;
+}
+function overviewHoldingsTable(rows){
+  const m={};
+  for(const r of rows){
+    m[r.ticker]=m[r.ticker]||{ticker:r.ticker,shares:0,v:0,sector:r.sector,portfolios:new Set()};
+    m[r.ticker].shares+=r.shares; m[r.ticker].v+=r.v; m[r.ticker].portfolios.add(r.portfolio);
+  }
+  return Object.values(m).sort((a,b)=>b.v-a.v);
+}
+function overviewAllocItems(by,rows){
+  const keyFn=by==='sector'?r=>r.sector:by==='portfolio'?r=>r.portfolio:r=>r.ticker;
+  const m={}; for(const r of rows)m[keyFn(r)]=(m[keyFn(r)]||0)+r.v;
+  return Object.entries(m).map(([k,v])=>({k,v})).sort((a,b)=>b.v-a.v);
+}
+function overviewLedger(){
+  const rows=[];
+  for(const p of state.portfolios){
+    for(const t of p.txns)rows.push({...t,kind:p.type==='options'?'opt':'txn',pname:p.name,pid:p.id,pccy:p.ccy});
+    for(const f of p.flows)rows.push({...f,kind:'flow',pname:p.name,pid:p.id,pccy:p.ccy});
+  }
+  return rows.sort((a,b)=>{const da=a.date||a.openDate,db=b.date||b.openDate;return da<db?1:da>db?-1:0;});
+}
+function setOvFilter(v){ui.ovFilter=v;renderView();}
+function overviewLedgerPanel(){
+  const filter=ui.ovFilter||'ALL';
+  const opts=`<option value="ALL" ${filter==='ALL'?'selected':''}>All portfolios</option>`+
+    state.portfolios.map(p=>`<option value="${p.id}" ${filter===p.id?'selected':''}>${esc(p.name)}</option>`).join('');
+  let rows=overviewLedger(); if(filter!=='ALL')rows=rows.filter(r=>r.pid===filter);
+  let html=`<div class="panel"><div class="phead"><h2>Historical transactions</h2>
+    <div style="display:flex;gap:8px;align-items:center">
+      <select onchange="setOvFilter(this.value)" style="width:auto;padding:6px 8px;font-size:12px">${opts}</select>
+      <span style="font-size:12px;color:var(--mut)">${rows.length} entries</span>
+    </div></div>`;
+  if(!rows.length)return html+`<div class="empty">Nothing logged yet.</div></div>`;
+  html+=`<table><tr><th style="text-align:left">Portfolio</th><th>Date</th><th style="text-align:left">Type</th><th style="text-align:left">Detail</th><th>Amount</th></tr>`;
+  for(const r of rows){
+    if(r.kind==='txn'){const c=ccyOf(r.ticker),amt=r.shares*r.price+(r.side==='buy'?1:-1)*+(r.fees||0);
+      html+=`<tr><td class="tx" style="text-align:left">${esc(r.pname)}</td><td>${r.date}</td>
+      <td class="tx" style="text-align:left"><span class="badge ${r.side==='buy'?'b-buy':'b-sell'}">${r.side==='buy'?'Buy':'Sell'}</span></td>
+      <td class="tx" style="text-align:left"><span class="tick">${esc(r.ticker.toUpperCase())}</span> · ${fmtN(+r.shares,4)} @ ${fmtN(+r.price)}</td>
+      <td>${fmt(amt,c)}</td></tr>`;
+    }else if(r.kind==='flow'){
+      html+=`<tr><td class="tx" style="text-align:left">${esc(r.pname)}</td><td>${r.date}</td>
+      <td class="tx" style="text-align:left"><span class="badge ${r.type==='deposit'?'b-dep':'b-wd'}">${r.type==='deposit'?'Deposit':'Withdraw'}</span></td>
+      <td class="tx" style="text-align:left">${esc(r.note||'Capital '+r.type)}</td><td>${fmt(+r.amount,r.ccy||r.pccy)}</td></tr>`;
+    }else{
+      const pl=optPL(r);
+      html+=`<tr><td class="tx" style="text-align:left">${esc(r.pname)}</td><td>${r.openDate}</td>
+      <td class="tx" style="text-align:left"><span class="badge ${pl==null?'b-open':'b-closed'}">${pl==null?'Open':'Closed'}</span></td>
+      <td class="tx" style="text-align:left"><span class="tick">${esc(r.underlying.toUpperCase())}</span> ${esc(r.cp==='call'?'C':'P')}${fmtN(+r.strike)}</td>
+      <td class="${pl==null?'':pctCls(pl)}">${pl==null?'—':fmt(pl,r.pccy)}</td></tr>`;
+    }
+  }
+  return html+`</table></div>`;
+}
+function renderOverview(){
+  const baseCcy=ui.baseCcy;
+  const totals=overviewTotals(), mwr=overviewXirr();
+  const comb=combinedSeries(ui.range);
+  const combTwr=comb?twrSeries(comb.V,comb.F):[], bench=comb?benchReturns('^GSPC',comb.axis):[];
+  const twrNow=combTwr.length?combTwr[combTwr.length-1]:null, benchNow=bench.length?bench[bench.length-1]:null;
+  const stocksN=state.portfolios.filter(p=>p.type==='stocks').length;
+
+  let html=`<div class="panel" style="padding:14px 18px"><div class="phead" style="margin-bottom:0">
+    <h2>Overview — all portfolios</h2>
+    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+      <div style="display:flex;gap:6px;align-items:center"><label style="margin:0;font-size:11.5px;color:var(--sub)">Base ccy</label>
+      <select onchange="setBaseCcy(this.value)" style="width:auto;padding:5px 8px;font-size:12px">${baseCcyOptions().map(c=>`<option ${baseCcy===c?'selected':''}>${c}</option>`).join('')}</select></div>
+      <div class="pills">${rangePills()}</div>
+    </div></div></div>`;
+
+  html+=`<div class="cards">
+    <div class="mcard"><div class="lbl">Total market value</div><div class="val num">${fmt(totals.mv,baseCcy)}</div>
+      <div class="sub">across ${stocksN} stock portfolio${stocksN===1?'':'s'}${totals.missing?' · some prices missing':''}</div></div>
+    <div class="mcard"><div class="lbl">Total cash</div><div class="val num">${fmt(totals.cash,baseCcy)}</div>
+      <div class="sub">converted at latest FX</div></div>
+    <div class="mcard"><div class="lbl">Combined TWR · ${ui.range}</div><div class="val num ${pctCls(twrNow)}">${fmtPct(twrNow)}</div>
+      <div class="sub num">S&amp;P 500: <span class="${pctCls(benchNow)}">${fmtPct(benchNow)}</span></div></div>
+    <div class="mcard"><div class="lbl">Unrealized P&L</div><div class="val num ${pctCls(totals.unrealized)}">${fmt(totals.unrealized,baseCcy)}</div>
+      <div class="sub num">Realized: <span class="${pctCls(totals.realized)}">${fmt(totals.realized,baseCcy)}</span></div></div>
+    <div class="mcard"><div class="lbl">Capital injected</div><div class="val num">${fmt(totals.inj,baseCcy)}</div>
+      <div class="sub">excluded from TWR</div></div>
+    <div class="mcard"><div class="lbl">Money-weighted (XIRR)</div><div class="val num ${pctCls(mwr)}">${mwr==null?'—':fmtPct(mwr)}</div>
+      <div class="sub">annualized, since inception</div></div>
+  </div>`;
+
+  html+=`<div class="panel"><div class="phead"><h2>Consolidated performance vs S&P 500</h2></div>
+    <div class="legend"><span><span class="swatch" style="background:${curPreset().perfColor}"></span>All portfolios (TWR, ${baseCcy})</span>
+    <span><span class="swatch" style="background:${curPreset().benchColor}"></span>S&P 500</span>
+    <span style="color:var(--mut)">non-${baseCcy} portfolios converted at daily FX</span></div>
+    <div class="chartbox"><canvas id="ovPerfChart"></canvas></div></div>`;
+
+  const posRows=overviewPositions(), holdTbl=overviewHoldingsTable(posRows), mvTotal=holdTbl.reduce((s,r)=>s+r.v,0);
+  html+=`<div class="panel"><div class="phead"><h2>Consolidated holdings</h2></div>`;
+  if(!holdTbl.length)html+=`<div class="empty">No open stock positions across portfolios yet.</div>`;
+  else{
+    html+=`<table><tr><th>Ticker</th><th style="text-align:left">Sector</th><th style="text-align:left">Portfolio(s)</th><th>Shares</th><th>Value (${baseCcy})</th><th>Weight</th></tr>`;
+    for(const r of holdTbl)html+=`<tr><td><span class="tick">${esc(r.ticker)}</span></td>
+      <td class="tx" style="text-align:left;color:var(--sub)">${esc(r.sector)}</td>
+      <td class="tx" style="text-align:left;color:var(--sub)">${[...r.portfolios].map(esc).join(', ')}</td>
+      <td>${fmtN(r.shares,4)}</td><td>${fmt(r.v,baseCcy)}</td><td>${mvTotal>0?(r.v/mvTotal*100).toFixed(1)+'%':'—'}</td></tr>`;
+    html+=`</table>`;
+  }
+  html+=`</div>`;
+
+  html+=`<div class="panel"><div class="phead"><h2>Allocation</h2>
+    <div style="display:flex;gap:4px">
+      <button class="pill ${chartPrefs.allocBy==='ticker'?'on':''}" onclick="setAllocBy('ticker')">By ticker</button>
+      <button class="pill ${chartPrefs.allocBy==='sector'?'on':''}" onclick="setAllocBy('sector')">By sector</button>
+      <button class="pill ${chartPrefs.allocBy==='portfolio'?'on':''}" onclick="setAllocBy('portfolio')">By portfolio</button>
+    </div></div>
+    <div class="chartbox"><canvas id="ovAllocChart"></canvas></div></div>`;
+
+  html+=`<div class="panel"><div class="phead"><h2>By portfolio</h2></div>
+  <table><tr><th style="text-align:left">Portfolio</th><th style="text-align:left">Type</th><th>Value</th><th>Cash</th><th>Injected</th><th>TWR · ${ui.range}</th><th>Sharpe</th><th>Max DD</th><th>Realized P&L</th></tr>`;
   for(const p of state.portfolios){
     if(p.type==='stocks'){
       const axis=axisDates(p,rangeStart(ui.range));
@@ -670,8 +945,14 @@ function renderAll(){
         <td>${multiCcyVal(injectedByCcy(p),p.ccy)}</td><td>—</td><td>—</td><td>—</td><td class="${pctCls(realized)}">${fmt(realized,p.ccy)}</td></tr>`;
     }
   }
-  html+=`</table><p class="hint" style="margin-top:10px">Values shown in each portfolio's own currency — no cross-currency total, by design.</p></div>`;
+  html+=`</table><p class="hint" style="margin-top:10px">Per-portfolio rows shown in each portfolio's own currency; cards above are converted to ${baseCcy}.</p></div>`;
+
+  html+=overviewLedgerPanel();
+
   $('#view').innerHTML=html;
+  if(comb)drawPerf(comb.axis,combTwr,bench,'S&P 500','ovPerfChart','ovPerf');
+  else{const el=document.getElementById('ovPerfChart');if(el)el.parentElement.innerHTML='<div class="empty">Add trades to a stocks portfolio to see consolidated performance.</div>';}
+  drawAllocGeneric('ovAllocChart',overviewAllocItems(chartPrefs.allocBy,posRows),baseCcy,'ovAlloc');
 }
 
 /* ============ modals & forms ============ */
@@ -792,7 +1073,7 @@ function openSettings(pid){
 }
 function saveSettings(pid){const p=pf(pid);p.name=$('#s_name').value.trim()||p.name;p.ccy=$('#s_ccy').value;p.benchmark=$('#s_bm').value;save();closeModal();refreshPrices(false);}
 function delPortfolio(pid){const p=pf(pid);if(!confirm(`Delete "${p.name}" and all its ${p.txns.length} transactions? This cannot be undone.`))return;
-  state.portfolios=state.portfolios.filter(x=>x.id!==pid);save();ui.tab=state.portfolios[0]?.id||'ALL';closeModal();render();}
+  state.portfolios=state.portfolios.filter(x=>x.id!==pid);save();ui.tab=state.portfolios[0]?.id||'OVERVIEW';closeModal();render();}
 
 /* ============ import / export ============ */
 function exportJSON(){
@@ -811,7 +1092,7 @@ function doImport(){
   r.onload=()=>{try{const j=JSON.parse(r.result);const s=j.state||j;
     if(!Array.isArray(s.portfolios))throw new Error('bad format');
     if(!confirm('Replace all current data with this backup?'))return;
-    state=s;save();ui.tab=state.portfolios[0]?.id||'ALL';closeModal();render();refreshPrices(false);
+    state=s;save();ui.tab='OVERVIEW';closeModal();render();refreshPrices(false);
   }catch(e){alert('Could not read that file — is it a Ledger export?');}};
   r.readAsText(f);
 }
